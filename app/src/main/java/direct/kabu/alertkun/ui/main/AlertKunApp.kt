@@ -1,0 +1,81 @@
+package direct.kabu.alertkun.ui.main
+
+import androidx.compose.runtime.Composable
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import direct.kabu.alertkun.model.MonitoringState
+import direct.kabu.alertkun.ui.account.AccountSettingsScreen
+import direct.kabu.alertkun.ui.mail.ReceivedMailScreen
+import direct.kabu.alertkun.ui.rule.RuleEditScreen
+import direct.kabu.alertkun.ui.rule.RuleSettingsScreen
+import direct.kabu.alertkun.ui.settings.OtherSettingsScreen
+
+private object AlertKunRoute {
+    const val Main = "main"
+    const val ReceivedMail = "received_mail"
+    const val Rules = "rules"
+    const val CreateRule = "rules/create"
+    const val EditRule = "rules/edit/{ruleId}?copy={copy}"
+    const val Account = "account"
+    const val Settings = "settings"
+}
+
+@Composable
+fun AlertKunApp() {
+    val navController = rememberNavController()
+    val sampleMonitoringState = MonitoringState(
+        isMonitoring = false,
+        lastSuccessfulCheckAtEpochMillis = null,
+        nextScheduledCheckAtEpochMillis = null,
+        consecutiveFailureCount = 0,
+    )
+
+    NavHost(
+        navController = navController,
+        startDestination = AlertKunRoute.Main,
+    ) {
+        composable(AlertKunRoute.Main) {
+            MainScreen(
+                monitoringState = sampleMonitoringState,
+                onOpenMail = { navController.navigate(AlertKunRoute.ReceivedMail) },
+                onOpenRules = { navController.navigate(AlertKunRoute.Rules) },
+                onOpenAccount = { navController.navigate(AlertKunRoute.Account) },
+                onOpenSettings = { navController.navigate(AlertKunRoute.Settings) },
+            )
+        }
+        composable(AlertKunRoute.ReceivedMail) {
+            ReceivedMailScreen(onBack = navController::navigateUp)
+        }
+        composable(AlertKunRoute.Rules) {
+            RuleSettingsScreen(
+                onBack = navController::navigateUp,
+                onAddRule = { navController.navigate(AlertKunRoute.CreateRule) },
+                onEditRule = { id -> navController.navigate("rules/edit/$id?copy=false") },
+                onCopyRule = { id -> navController.navigate("rules/edit/$id?copy=true") },
+            )
+        }
+        composable(AlertKunRoute.CreateRule) {
+            RuleEditScreen(
+                ruleId = null,
+                copy = false,
+                onBack = navController::navigateUp,
+                onSaved = navController::navigateUp,
+            )
+        }
+        composable(AlertKunRoute.EditRule) { backStackEntry ->
+            RuleEditScreen(
+                ruleId = backStackEntry.arguments?.getString("ruleId"),
+                copy = backStackEntry.arguments?.getString("copy")?.toBoolean() ?: false,
+                onBack = navController::navigateUp,
+                onSaved = navController::navigateUp,
+            )
+        }
+        composable(AlertKunRoute.Account) {
+            AccountSettingsScreen(onBack = navController::navigateUp)
+        }
+        composable(AlertKunRoute.Settings) {
+            OtherSettingsScreen(onBack = navController::navigateUp)
+        }
+    }
+}
