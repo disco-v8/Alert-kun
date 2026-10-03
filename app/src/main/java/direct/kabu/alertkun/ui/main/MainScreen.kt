@@ -15,8 +15,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import direct.kabu.alertkun.R
 import direct.kabu.alertkun.model.MonitoringState
 import direct.kabu.alertkun.ui.theme.AlertKunTheme
 
@@ -30,9 +32,17 @@ fun MainScreen(
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val status = stringResource(
+        if (monitoringState.isMonitoring) R.string.monitoring_active else R.string.monitoring_stopped,
+    )
+    val lastSuccessfulCheck = monitoringState.lastSuccessfulCheckAtEpochMillis?.toString()
+        ?: stringResource(R.string.not_available)
+    val nextScheduledCheck = monitoringState.nextScheduledCheckAtEpochMillis?.toString()
+        ?: stringResource(R.string.not_available)
+
     Scaffold(
         modifier = modifier,
-        topBar = { TopAppBar(title = { Text("アラートくん") }) },
+        topBar = { TopAppBar(title = { Text(stringResource(R.string.main_title)) }) },
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -43,55 +53,33 @@ fun MainScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Text(
-                text = "監視状態: ${monitoringState.statusText()}",
+                text = stringResource(R.string.monitoring_status, status),
                 style = MaterialTheme.typography.titleMedium,
             )
-            Text("最終受信成功: ${monitoringState.lastSuccessfulCheckText()}")
-            Text("次回受信予定: ${monitoringState.nextScheduledCheckText()}")
+            Text(stringResource(R.string.last_successful_check, lastSuccessfulCheck))
+            Text(stringResource(R.string.next_scheduled_check, nextScheduledCheck))
 
-            NavigationButton(label = "受信メール", onClick = onOpenMail)
-            NavigationButton(label = "ルール設定", onClick = onOpenRules)
-            NavigationButton(label = "アカウント設定", onClick = onOpenAccount)
-            NavigationButton(label = "その他設定", onClick = onOpenSettings)
+            NavigationButton(label = stringResource(R.string.received_mail), onClick = onOpenMail)
+            NavigationButton(label = stringResource(R.string.rule_settings), onClick = onOpenRules)
+            NavigationButton(label = stringResource(R.string.account_settings), onClick = onOpenAccount)
+            NavigationButton(label = stringResource(R.string.settings), onClick = onOpenSettings)
         }
     }
 }
 
 @Composable
-private fun NavigationButton(
-    label: String,
-    onClick: () -> Unit,
-) {
-    Button(
-        modifier = Modifier.fillMaxWidth(),
-        onClick = onClick,
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.titleMedium,
-        )
+private fun NavigationButton(label: String, onClick: () -> Unit) {
+    Button(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
+        Text(text = label, style = MaterialTheme.typography.titleMedium)
     }
 }
-
-private fun MonitoringState.statusText(): String = if (isMonitoring) "監視中" else "停止中"
-
-private fun MonitoringState.lastSuccessfulCheckText(): String =
-    lastSuccessfulCheckAtEpochMillis?.toString() ?: "なし"
-
-private fun MonitoringState.nextScheduledCheckText(): String =
-    nextScheduledCheckAtEpochMillis?.toString() ?: "なし"
 
 @Preview(showBackground = true)
 @Composable
 private fun MainScreenPreview() {
     AlertKunTheme {
         MainScreen(
-            monitoringState = MonitoringState(
-                isMonitoring = false,
-                lastSuccessfulCheckAtEpochMillis = null,
-                nextScheduledCheckAtEpochMillis = null,
-                consecutiveFailureCount = 0,
-            ),
+            monitoringState = MonitoringState(false, null, null, 0),
             onOpenMail = {},
             onOpenRules = {},
             onOpenAccount = {},

@@ -1,0 +1,18 @@
+<resources>
+    <string name="app_name">アラートくん</string><string name="back">戻る</string><string name="settings">設定</string><string name="languages">言語</string><string name="english">英語</string><string name="japanese">日本語</string><string name="main_title">アラートくん</string><string name="monitoring_active">監視中</string><string name="monitoring_stopped">停止中</string><string name="not_available">未確認</string><string name="received_mail">受信メール</string><string name="account_settings">アカウント設定</string><string name="rule_settings">ルール設定</string><string name="no_received_mail">受信メールはありません</string><string name="account_settings_not_available">アカウント設定はまだ利用できません。</string><string name="create_rule">ルール作成</string><string name="edit_rule">ルール編集</string><string name="copy_rule">コピー</string><string name="add_rule">ルール追加</string><string name="name">名前</string><string name="search_text">検索文字列</string><string name="search_target">検索対象</string><string name="priority">優先順位（小さいほど高優先）</string><string name="vibration">バイブレーション</string><string name="alarm_mode">アラームモード</string><string name="enabled">有効</string><string name="save">保存</string><string name="cancel">キャンセル</string><string name="delete">削除</string><string name="delete_rule_title">ルールを削除しますか？</string><string name="delete_rule_message">%1$s を削除します。</string><string name="no_rules">ルールはありません</string><string name="sound_later">音の選択は後のフェーズで対応します。</string><string name="validation_name">名前を入力してください</string><string name="validation_search">検索文字列を入力してください</string><string name="validation_priority">優先順位は1以上にしてください</string><string name="developer_tools">開発者ツール</string><string name="manual_alarm_note">手動アラーム確認用です。通常の設定ではありません。</string><string name="test_alarm_once">アラームを1回テスト</string><string name="test_alarm_until_stopped">停止までアラームをテスト</string><string name="stop_test_alarm">テストアラームを停止</string><string name="target_subject">件名</string><string name="target_body">本文</string><string name="target_subject_and_body">件名と本文</string><string name="alarm_once">1回</string><string name="alarm_until_stopped">停止まで継続</string><string name="vibration_none">なし</string><string name="vibration_pattern_1">パターン1</string><string name="vibration_pattern_2">パターン2</string><string name="vibration_pattern_3">パターン3</string>
+    <string name="monitoring_status">監視状態: %1$s</string>
+    <string name="last_successful_check">最終成功確認: %1$s</string>
+    <string name="next_scheduled_check">次回確認予定: %1$s</string>
+    <string name="alarm_notification_title">アラートくん: %1$s</string>
+    <string name="alarm_no_subject">(件名なし)</string>
+    <string name="alarm_channel_name">アラートくん アラーム</string>
+    <string name="alarm_channel_description">アラートくんのアラーム通知</string>
+    <string name="stop">停止</string>
+    <string name="validation_rule_not_found">ルールが見つかりません</string>
+    <string name="validation_save_rule">ルールを保存できませんでした</string>
+    <string name="copy_rule_name_format">%1$s コピー</string>
+    <string name="test_alarm_rule_name">テストアラーム</string>
+    <string name="test_alarm_subject">手動アラームテスト</string>
+    <string name="rule_search_description">%1$s: %2$s</string>
+    <string name="rule_configuration_summary">%1$s: %2$d · %3$s · %4$s</string>
+</resources>

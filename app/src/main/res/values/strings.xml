@@ -1,3 +1,25 @@
 <resources>
     <string name="app_name">AlertKun</string>
+    <string name="back">Back</string><string name="settings">Settings</string><string name="languages">Languages</string><string name="english">English</string><string name="japanese">Japanese</string>
+    <string name="main_title">Alert-kun</string><string name="monitoring_active">Active</string><string name="monitoring_stopped">Stopped</string><string name="not_available">Not available</string>
+    <string name="received_mail">Received Mail</string><string name="account_settings">Account Settings</string><string name="rule_settings">Rule Settings</string><string name="no_received_mail">No received mail</string><string name="account_settings_not_available">Account settings are not available yet.</string>
+    <string name="create_rule">Create Rule</string><string name="edit_rule">Edit Rule</string><string name="copy_rule">Copy Rule</string><string name="add_rule">Add Rule</string><string name="name">Name</string><string name="search_text">Search text</string><string name="search_target">Search target</string><string name="priority">Priority (smaller is higher)</string><string name="vibration">Vibration</string><string name="alarm_mode">Alarm mode</string><string name="enabled">Enabled</string><string name="save">Save</string><string name="cancel">Cancel</string><string name="delete">Delete</string><string name="delete_rule_title">Delete rule?</string><string name="delete_rule_message">%1$s will be deleted.</string><string name="no_rules">No rules yet</string><string name="sound_later">Sound selection is available in a later phase.</string>
+    <string name="validation_name">Name is required</string><string name="validation_search">Search text is required</string><string name="validation_priority">Priority must be at least 1</string>
+    <string name="developer_tools">Developer tools</string><string name="manual_alarm_note">Manual alarm verification only. This is not a user setting.</string><string name="test_alarm_once">Test alarm once</string><string name="test_alarm_until_stopped">Test alarm until stopped</string><string name="stop_test_alarm">Stop test alarm</string>
+    <string name="target_subject">Subject</string><string name="target_body">Body</string><string name="target_subject_and_body">Subject and body</string><string name="alarm_once">Once</string><string name="alarm_until_stopped">Until stopped</string><string name="vibration_none">None</string><string name="vibration_pattern_1">Pattern 1</string><string name="vibration_pattern_2">Pattern 2</string><string name="vibration_pattern_3">Pattern 3</string>
+    <string name="monitoring_status">Monitoring status: %1$s</string>
+    <string name="last_successful_check">Last successful check: %1$s</string>
+    <string name="next_scheduled_check">Next scheduled check: %1$s</string>
+    <string name="alarm_notification_title">Alert-kun: %1$s</string>
+    <string name="alarm_no_subject">(No subject)</string>
+    <string name="alarm_channel_name">AlertKun alarms</string>
+    <string name="alarm_channel_description">Alarm notifications from AlertKun</string>
+    <string name="stop">Stop</string>
+    <string name="validation_rule_not_found">Rule not found</string>
+    <string name="validation_save_rule">Unable to save rule</string>
+    <string name="copy_rule_name_format">%1$s Copy</string>
+    <string name="test_alarm_rule_name">Test alarm</string>
+    <string name="test_alarm_subject">Manual alarm test</string>
+    <string name="rule_search_description">%1$s: %2$s</string>
+    <string name="rule_configuration_summary">%1$s: %2$d · %3$s · %4$s</string>
 </resources>

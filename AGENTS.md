@@ -589,6 +589,15 @@ Android resource
 
 Composableは必要以上に巨大化させず、状態と責務を明確にする。
 
+### Localization
+
+- ユーザー向け文字列をKotlin / Composeコードへ直接ハードコードしない。画面、通知、ダイアログ、validation、ボタン、ラベル、placeholder、accessibility用文言も対象とする。
+- 基準言語はEnglishの `res/values/strings.xml` とし、日本語は `res/values-ja/strings.xml` に定義する。新しい表示文言は両方へ同時に追加し、Englishをfallback言語として扱う。
+- format引数を含む文言は可能な限りformat string resourceを使う。
+- `enum.name` や内部識別子を表示名に使わない。enumのユーザー向け表示名はstring resourceから取得する。
+- class名、package名、DB識別子、notification channel id、Intent action、route、UUID、testTag、ログ、内部例外メッセージは原則翻訳しない。
+- UI操作テストでは、翻訳確認が目的でない限り表示文字列をセレクタに使わない。必要に応じて `rule_edit_<ruleId>` や `alarm_test_once` のような安定した言語非依存testTagを使う。
+
 ---
 
 ## 20. テスト規約

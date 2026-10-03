@@ -11,6 +11,7 @@ composeBom = "2026.02.01"
 navigationCompose = "2.10.2"
 room = "2.8.5"
 dataStore = "1.2.1"
+appcompat = "1.7.1"
 ksp = "2.3.10"
 serializationJson = "1.8.1"
 
@@ -35,6 +36,7 @@ androidx-room-runtime = { group = "androidx.room", name = "room-runtime", versio
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "dataStore" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serializationJson" }
 
 [plugins]
