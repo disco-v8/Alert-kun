@@ -151,7 +151,7 @@ POP3 / IMAP通信およびメール解析を担当する。
 
 ### monitoring/
 
-監視処理、Foreground Service、一回分の受信処理の統括等を担当する。
+WorkManagerによる監視スケジューリングと一回分の受信処理の統括等を担当する。
 
 ### alarm/
 
@@ -421,23 +421,22 @@ RuleEngineはAndroid frameworkから可能な限り独立させ、ローカルJV
 
 ---
 
-## 14. 監視処理
+## 14. 監視処理とバックグラウンド実行ルール
 
-Foreground Serviceは監視のライフサイクルを担当する。
+Phase 6の監視は`WorkManager -> MailCheckWorker -> MailCheckCoordinator -> MailReceiver -> Room -> RuleEngine -> AlarmController`で実装する。常駐Foreground Service、`foregroundServiceType="dataSync"`、常駐通知、`while (true)` / 長時間`delay()`のpolling loop、アプリ独自の長時間WakeLockは使用しない。
 
-主な責務:
+- 1 Workerは1回のboundedなmail checkだけを実行する。WorkerへRoom・RuleEngine・Alarm処理の詳細を詰め込まず、`MailCheckCoordinator`へ委譲する。
+- `pollIntervalMinutes`は1～1500分、default 5分の「check開始時刻間の目標周期」であり、正確な実行時刻を保証しない。
+- 1～14分はunique `OneTimeWorkRequest`の自己再登録、15分以上はunique `PeriodicWorkRequest`を使用する。14 / 15分が境界である。AlarmManager、Expedited Work、Foreground InfoはPhase 6で使用しない。
+- `scheduleGeneration`は、ON/OFF、interval変更、起動時または不整合scheduleのrebase、大きな時計変更で更新する。scheduled Workerは自身のgenerationが現在値と一致するときだけ次work登録とnext target更新を行う。runNow、正常scheduleを維持する起動時OFF、timezone変更、60秒未満の時計補正はgenerationを更新しない。
+- mail checkはprocess-local `executionMutex`で直列化する。scheduled WorkerはMutex取得後にDataStoreを再読込し、直前のcheckから計算したtargetより前ならskipする。runNowはskipしない。skipしても有効なshort scheduleを失わせない。
+- targetは実check開始時刻（rebase時は現在時刻）をlocal timeの分境界に丸め、intervalを加算する。秒0～30.000は現在分、30.001以降は次分を基準とし、実測の`lastCheckStartedAtEpochMillis`自体は丸めない。interval変更では変更時刻を基準にする。
+- `checkImmediatelyOnAppStart`はdefault ON。`StartupReconcileGate`により同一processで一度だけcold-start相当の処理を行う。ONはstartup checkとschedule rebase、OFFは正常なfuture scheduleを維持し、期限切れ・欠落・不整合のみcheckなしでrebaseする。
+- `ACTION_TIME_CHANGED`はwall clockと`elapsedRealtime`から補正量を求め、絶対値60秒以上だけrebaseする。`ACTION_TIMEZONE_CHANGED`はscheduleやgenerationを変えず、日時表示だけ再評価する。
+- 通常workへ`NetworkType.CONNECTED` constraintを付けない。Worker内で`DEVICE_OFFLINE`と`SERVER_UNAVAILABLE`を区別し、どちらも永続的な連続失敗countへ含める。成功（新着0通を含む）でcountとfailure notification状態をresetする。
+- `MonitoringStatusRepository`はDataStoreへ監視有効状態、failure状態、last successful / started / completed check、next target、schedule generationを永続化する。UIのnext targetは端末local timezoneで`YYYY/MM/DD HH:mm頃`と表示し、保証時刻として扱わない。
 
-- 監視開始
-- 監視停止
-- 次回ポーリングまでの待機
-- 必要最小時間のWakeLock
-- 一回分のメール確認処理の呼び出し
-- 常駐通知更新
-- Service状態管理
-
-メール通信、ルール判定、Room処理等の詳細をForeground Serviceクラスへ直接詰め込まない。
-
-一回分のポーリング処理全体は `MailCheckCoordinator` 等へ委譲する。
+`MailCheckCoordinator`はまず`RECEIVED`をresumeし、new mailはRoom UNIQUE制約で重複防止して`RECEIVED`保存する。RuleEngine評価とAlarmControllerへのhandoff完了後に`PROCESSED`へ進める。この意味論を変更してはならない。Phase 6は`DummyMailReceiver`のみであり、POP3S / IMAPS実通信は未実装である。
 
 ---
 
@@ -756,6 +755,9 @@ Codexその他のAI開発支援ツールは、実装前に次の順序で作業�
 
 - 仕様変更
 - `architecture.md` の基本方針変更
+- 常駐 `dataSync` Foreground Service の導入・維持
+- OS制限やFGS時間制限を無視した24/365常駐ポーリングループの作成
+- Exact Alarm（`SCHEDULE_EXACT_ALARM`）の安易な利用
 - メール受信意味論の変更
 - UIDL / UID管理方式の変更
 - `RECEIVED` / `PROCESSED`状態モデルの削除・変更
@@ -839,7 +841,7 @@ Phase 5
     通知 / 音 / バイブレーション / 繰り返し警報
 
 Phase 6
-    Foreground Service / ポーリング骨格
+    WorkManager / MailCheckWorker / DummyMailReceiver による監視骨格
 
 Phase 7
     POP3S

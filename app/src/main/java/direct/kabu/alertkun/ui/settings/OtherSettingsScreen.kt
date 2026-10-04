@@ -18,11 +18,15 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Modifier
@@ -40,10 +44,22 @@ fun OtherSettingsScreen(
     onBack: () -> Unit,
     viewModel: AlarmTestViewModel = viewModel(),
     languageViewModel: LanguageSettingsViewModel = viewModel(),
+    monitoringViewModel: MonitoringSettingsViewModel = viewModel(),
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val language by languageViewModel.language.collectAsStateWithLifecycle()
+    val monitoringSettings by monitoringViewModel.settings.collectAsStateWithLifecycle()
+    var pollInterval by remember { mutableStateOf("") }
+    var failureThreshold by remember { mutableStateOf("") }
+    var monitoringEnabled by remember { mutableStateOf(false) }
+    var checkImmediatelyOnAppStart by remember { mutableStateOf(true) }
+    LaunchedEffect(monitoringSettings) {
+        pollInterval = monitoringSettings.pollIntervalMinutes.toString()
+        failureThreshold = monitoringSettings.consecutiveFailureThreshold.toString()
+        monitoringEnabled = monitoringSettings.monitoringEnabled
+        checkImmediatelyOnAppStart = monitoringSettings.checkImmediatelyOnAppStart
+    }
     var pendingAlarm by remember { mutableStateOf<(() -> Unit)?>(null) }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         pendingAlarm?.invoke()
@@ -71,7 +87,25 @@ fun OtherSettingsScreen(
             Text(stringResource(R.string.languages))
             LanguageChoice(AppLanguage.ENGLISH, language, languageViewModel::select)
             LanguageChoice(AppLanguage.JAPANESE, language, languageViewModel::select)
+            Text(stringResource(R.string.monitoring_settings))
+            val pollValid = pollInterval.toIntOrNull() in 1..1500
+            val thresholdValid = failureThreshold.toIntOrNull() in 1..99
+            OutlinedTextField(value = pollInterval, onValueChange = { pollInterval = it }, isError = pollInterval.isNotEmpty() && !pollValid, label = { Text(stringResource(R.string.poll_interval_minutes)) }, modifier = Modifier.fillMaxWidth().testTag("monitoring_poll_interval"))
+            OutlinedTextField(value = failureThreshold, onValueChange = { failureThreshold = it }, isError = failureThreshold.isNotEmpty() && !thresholdValid, label = { Text(stringResource(R.string.consecutive_failure_threshold)) }, modifier = Modifier.fillMaxWidth().testTag("monitoring_failure_threshold"))
+            androidx.compose.foundation.layout.Row {
+                Checkbox(checked = monitoringEnabled, onCheckedChange = { monitoringEnabled = it })
+                Text(stringResource(R.string.monitoring_enabled))
+            }
+            androidx.compose.foundation.layout.Row {
+                Switch(checked = checkImmediatelyOnAppStart, onCheckedChange = { checkImmediatelyOnAppStart = it }, modifier = Modifier.testTag("check_immediately_on_app_start"))
+                Text(stringResource(R.string.check_immediately_on_app_start))
+            }
+            Button(onClick = { val poll = pollInterval.toIntOrNull(); val threshold = failureThreshold.toIntOrNull(); if (pollValid && thresholdValid) monitoringViewModel.update(poll!!, threshold!!, monitoringEnabled, checkImmediatelyOnAppStart) }, enabled = pollValid && thresholdValid, modifier = Modifier.fillMaxWidth().testTag("monitoring_save")) { Text(stringResource(R.string.save_monitoring_settings)) }
             Text(stringResource(R.string.developer_tools))
+            Button(onClick = monitoringViewModel::queueMatching, modifier = Modifier.fillMaxWidth().testTag("queue_dummy_matching_mail")) { Text(stringResource(R.string.queue_dummy_matching_mail)) }
+            Button(onClick = monitoringViewModel::queueNonMatching, modifier = Modifier.fillMaxWidth().testTag("queue_dummy_non_matching_mail")) { Text(stringResource(R.string.queue_dummy_non_matching_mail)) }
+            Button(onClick = monitoringViewModel::runNow, modifier = Modifier.fillMaxWidth().testTag("run_poll_now")) { Text(stringResource(R.string.run_poll_now)) }
+            OutlinedButton(onClick = monitoringViewModel::simulateFailure, modifier = Modifier.fillMaxWidth().testTag("simulate_poll_failure")) { Text(stringResource(R.string.simulate_poll_failure)) }
             Text(stringResource(R.string.manual_alarm_note))
             AlarmTestControls(
                 onOnce = { startWithPermission { viewModel.startOnce() } },

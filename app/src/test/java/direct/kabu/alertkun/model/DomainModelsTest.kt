@@ -3,9 +3,15 @@ package direct.kabu.alertkun.model
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DomainModelsTest {
+    @Test
+    fun monitoringSettingsCheckImmediatelyOnAppStartDefaultsToEnabled() {
+        assertTrue(MonitoringSettings().checkImmediatelyOnAppStart)
+    }
+
     @Test
     fun mailProtocolDefinesAllSupportedProtocols() {
         assertEquals(

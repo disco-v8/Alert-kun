@@ -4,7 +4,9 @@ import androidx.compose.runtime.Composable
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import direct.kabu.alertkun.model.MonitoringState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.runtime.getValue
 import direct.kabu.alertkun.ui.account.AccountSettingsScreen
 import direct.kabu.alertkun.ui.mail.ReceivedMailScreen
 import direct.kabu.alertkun.ui.rule.RuleEditScreen
@@ -24,12 +26,8 @@ private object AlertKunRoute {
 @Composable
 fun AlertKunApp() {
     val navController = rememberNavController()
-    val sampleMonitoringState = MonitoringState(
-        isMonitoring = false,
-        lastSuccessfulCheckAtEpochMillis = null,
-        nextScheduledCheckAtEpochMillis = null,
-        consecutiveFailureCount = 0,
-    )
+    val monitoringViewModel: MainMonitoringViewModel = viewModel()
+    val monitoring by monitoringViewModel.state.collectAsStateWithLifecycle()
 
     NavHost(
         navController = navController,
@@ -37,7 +35,9 @@ fun AlertKunApp() {
     ) {
         composable(AlertKunRoute.Main) {
             MainScreen(
-                monitoringState = sampleMonitoringState,
+                monitoringState = monitoring.monitoringState,
+                pollIntervalMinutes = monitoring.settings.pollIntervalMinutes,
+                timeZoneRevision = monitoring.timeZoneRevision,
                 onOpenMail = { navController.navigate(AlertKunRoute.ReceivedMail) },
                 onOpenRules = { navController.navigate(AlertKunRoute.Rules) },
                 onOpenAccount = { navController.navigate(AlertKunRoute.Account) },

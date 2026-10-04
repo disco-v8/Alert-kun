@@ -5,4 +5,5 @@ data class MonitoringSettings(
     val mailRetentionDays: Int = 7,
     val consecutiveFailureThreshold: Int = 3,
     val monitoringEnabled: Boolean = false,
+    val checkImmediatelyOnAppStart: Boolean = true,
 )

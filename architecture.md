@@ -20,7 +20,7 @@
 
 1. メールを取りこぼさないこと
 2. 同じメールを誤って何度も警報しないこと
-3. Android OSに停止されにくいこと
+3. Android OS環境下で監視継続性を最優先し、24時間365日復帰可能であること
 4. 監視機能自体の異常をユーザーが認識できること
 5. 認証情報を安全に扱うこと
 6. 長期間安定して動作すること
@@ -42,7 +42,7 @@ UIの簡便さよりも、受信処理の安定性、重複防止、障害時の
 - セキュリティ
 - OSイベント受信
 
-`MainActivity` やForeground Serviceへ処理を集中させない。
+`MainActivity` やWorkManagerのWorkerへ処理を集中させない。
 
 特に、メール通信、ルール判定、通知、Room、Keystore、OSイベント処理は独立した責務として実装する。
 
@@ -103,7 +103,7 @@ UIはJetpack Composeで実装する。
 UI層では以下を行わない。
 
 - POP3 / IMAP通信
-- Foreground Service内部処理
+- WorkManager Worker内部処理
 - Roomへの直接アクセス
 - Keystoreへの直接アクセス
 - ルール判定本体
@@ -129,10 +129,10 @@ UIはViewModelを介してアプリ状態を表示・更新する。
 
 ```text
 アラートくん
-監視中
+監視中（5分毎）
 
-最終受信成功: 10:42:13
-次回受信予定: 約5分後
+最終確認: 2026/10/04 19:40
+次回確認予定: 2026/10/04 19:45頃
 
 [受信メール]
 [ルール設定]
@@ -140,7 +140,7 @@ UIはViewModelを介してアプリ状態を表示・更新する。
 [その他設定]
 ```
 
-監視状態はUI独自に保持せず、監視状態モデルから取得する。
+監視状態はUI独自に保持せず、監視状態モデルから取得する。監視ON時は現在の`pollIntervalMinutes`を表示し、監視OFF時は周期を表示しない。日時は端末local timezoneの`YYYY/MM/DD HH:mm`で表示し、epoch millis・UNIX time・秒を直接表示しない。`nextScheduledCheckAtEpochMillis` は保証実行時刻ではなく目標予定時刻として「頃」を付けて表示する。
 
 ---
 
@@ -432,46 +432,164 @@ HTMLは判定可能なプレーンテキストへ変換する。
 
 ---
 
-## 16. monitoring
+## 14. 監視方針とバックグラウンド実行戦略
 
-監視処理の中心。
+### 14.1 24/365監視方針と常駐FGSの完全廃止
 
-### 16.1 MonitoringService
+- **24時間365日の監視継続性**を最優先とする。
+- **常駐 Foreground Service（24時間365日常時起動・維持する FGS）は完全廃止・禁止**とする。Android 15以降の実行時間制限（最大6時間等）およびFGS制約により、常駐方式は長期運用と両立しないためである。
+- スケジューリングの主軸には `WorkManager` を使用する。
+- 1回のメール確認処理（mail check）は短時間タスクとして設計する。
 
-Foreground Serviceとして動作する。
+### 14.2 pollIntervalMinutes（目標ポーリング間隔）の意味
+
+- 設定範囲: 1～1500分（デフォルト 5分）
+- **意味**: 「目標ポーリング間隔」であり、時間精度の高い厳密な実行（Exact Execution）を保証するものではない。
+- Android OSの Doze モード、省電力機能、バックグラウンド実行制限により、実際の実行時刻が遅延することを許容する。
+- 時間の厳密性よりも、OS環境下で確実に生き残る監視継続性を最優先する。
+
+### 14.3 WorkManagerの役割と制約
+
+- スケジューリングの主軸として `WorkManager` を使用する。
+- 1～14分は、unique `OneTimeWorkRequest` を用いるshort scheduleで実装する。Workerは待機せず、実行の終了時に有効なgenerationでのみ次のshort workを登録する。
+- 15分以上は、unique `PeriodicWorkRequest` を用いるperiodic scheduleで実装する。14 / 15分が方式の境界である。
+- 1 Workerは1回のboundedなmail checkだけを実行する。Worker内で`while (true)`、長時間の`delay()`、次回周期までの待機を行わない。
+- WorkManagerの実行時刻はOS都合で遅延し得る。`pollIntervalMinutes`はmail check開始時刻間の目標周期であり、Exact Executionを保証しない。
+
+### 14.4 AlarmManager
+
+Phase 6の現実装では`AlarmManager`を監視スケジュールに使用しない。WorkManagerだけでshort / periodic scheduleを構成する。Exact Alarmおよび`SCHEDULE_EXACT_ALARM`は使用しない。
+
+### 14.5 Foreground処理
+
+常駐 Foreground Service、`foregroundServiceType="dataSync"`、常駐監視notificationは使用しない。Phase 6のmail checkは通常の`CoroutineWorker`で実行し、Expedited Work、Foreground Info、短命Serviceも使用しない。
+
+### 14.6 WakeLock
+
+アプリ独自のWakeLockは使用しない。WorkManagerのwake管理に委ね、長時間または常時のWakeLock保持は使用しない。
+
+---
+
+## 15. メール取得方針と parser
+
+### 15.1 メール取得方針
+
+新着確認時は必要以上に本文を取得しない。
+
+基本方針:
+
+```text
+新着識別
+↓
+Subject取得
+↓
+有効ルールを確認
+↓
+件名のみで処理可能なら本文取得を省略
+↓
+本文判定が必要なら本文取得
+```
+
+有効ルールに`BODY`または`SUBJECT_AND_BODY`が存在する場合、必要に応じて本文を取得する。
+
+添付ファイルは取得・保存・表示・判定しない。
+
+### 15.2 mail/parser
+
+以下のようなメール本文から判定用テキストを生成する。
+
+```text
+text/plain
+text/html
+multipart/*
+```
+
+HTMLは判定可能なプレーンテキストへ変換する。
+
+添付ファイルは無視する。
+
+---
+
+## 16. monitoring モジュール構造
+
+監視処理の中心となるモジュール構成。詳細な実行戦略やOS制約については「14. 監視方針とバックグラウンド実行戦略」を参照すること。
+
+### 16.1 概要
+
+14章で定義した監視方針に従い、`monitoring` パッケージのクラス群を構成する。
+
+### 16.2 監視スケジューラー（Worker / Scheduler）
+
+実装経路は次のとおりである。
+
+```text
+WorkManager
+↓
+MailCheckWorker
+↓
+MailCheckCoordinator
+↓
+MailReceiver
+↓
+Room
+↓
+RuleEngine
+↓
+AlarmController
+```
 
 主な責務:
 
-- 監視開始
-- 監視停止
-- 次回ポーリングまでの待機
-- 必要最小時間のWakeLock
-- 一回分の受信処理呼び出し
-- 常駐通知更新
-- Service状態管理
+- `MonitoringScheduler`: start / stop / interval変更時の再登録、起動時reconcile、時刻変更rebase、runNowのenqueue、unique work名とschedule generationの管理
+- `MailCheckWorker`: 1回だけ`MailCheckCoordinator`を呼び出し、結果・監視状態を更新する実行アダプタ
+- `MailCheckWorker`間のmail checkはprocess-local `executionMutex`で直列化する。scheduled WorkerはMutex取得後にDataStoreを再読込し、直前のcheck開始時刻から計算した次targetより前ならCoordinatorをskipする。
+- skipしたshort Workerも、有効なgenerationなら次のshort workを再登録する。
 
-Service自身にはメール受信やルール判定の詳細を埋め込まない。
+### 16.3 MailCheckCoordinator
 
-### 16.2 MailCheckCoordinator
-
-一回分のポーリング処理全体を統括する。
+一回分のポーリング処理全体を統括する。Android Frameworkから独立しており、JVM単体テストが可能。Phase 6では`DummyMailReceiver`を使用し、POP3S / IMAPS実通信は未実装である。
 
 概念フロー:
 
 ```text
-1. アカウント取得
-2. メールサーバー接続
-3. 新着識別
-4. 未受信メール取得
-5. ヘッダー / Subject取得
-6. 必要なら本文取得
-7. Roomへ受信メールを保存
-8. ルール判定
-9. 必要なら警報処理
-10. 処理状態更新
-11. 設定に応じてサーバー側メール削除
-12. 正常終了
+1. 既存`RECEIVED`をローカルデータからresumeする
+2. `MailReceiver`から新規mailを取得する
+3. 必要なら本文を取得する
+4. `accountId + remoteMessageId`のRoom UNIQUE制約で重複を防ぎつつ`RECEIVED`として保存する
+5. RuleEngineで評価する
+6. 一致時はAlarmControllerへhandoffした後に、非一致時はそのまま、`PROCESSED`へfinalizeする
 ```
+
+### 16.4 MonitoringState（監視状態モデル）
+
+アプリ全体で共有する監視状態。
+
+プロパティ意味:
+
+- `isMonitoring`: 監視スケジュールが有効（アクティブ）か
+- `lastSuccessfulCheckAtEpochMillis`: 最後に正常完了したメール確認日時
+- `nextScheduledCheckAtEpochMillis`: 次回の目標予定時刻（※14.2で定義したとおり、OSの都合で遅延する可能性がある目標値）
+- `consecutiveFailureCount`: 連続失敗回数
+
+`MonitoringStatusRepository`は上記のUI状態に加え、DataStoreへ`monitoringEnabled`、failure notification済み状態、`lastCheckStartedAtEpochMillis`、`lastCheckCompletedAtEpochMillis`、`scheduleGeneration`、schedule種別を保持する。開始・完了は成功／失敗にかかわらない実測時刻であり、成功時刻とは混同しない。
+
+### 16.5 次回target・scheduleGeneration・runNow
+
+- `nextScheduledCheckAtEpochMillis`は予定であり、保証実行時刻ではない。UIは端末local timezoneの`YYYY/MM/DD HH:mm`で表示し、「頃」を付ける。epoch millisや秒を直接表示しない。
+- targetは実際のcheck開始時刻（rebase時は基準となる現在時刻）をlocal timeの分境界へ丸めてからintervalを加算する。秒が0～30.000なら現在分、30.001以降なら次分を基準にする。`lastCheckStartedAtEpochMillis`自体は丸めない。
+- interval変更は変更時刻を新しい周期の起点とし、過去のcheck開始時刻を流用しない。
+- `scheduleGeneration`はWorkManagerの非同期cancel後に旧Workerがscheduleを復活・上書きすることを防ぐ。scheduled Workerはenqueue時のgenerationを保持し、次work登録およびnext target更新前に現在generationとの一致を確認する。
+- generationは監視ON/OFF、interval変更、起動時rebase、期限切れ・欠落・不整合scheduleのrebase、大きなwall clock変更で更新する。runNow、正常scheduleを維持する起動時OFF、timezone変更、60秒未満の時計補正では更新しない。
+- runNowは単発の明示checkでありgenerationを変更しない。近接skipの対象外だが、実行後にscheduled Workerが近接skipされることはある。
+
+### 16.6 起動時reconcile・時計・ネットワーク・失敗状態
+
+- `checkImmediatelyOnAppStart`はBoolean、default ONである。`StartupReconcileGate`により、Activity再生成やonResumeではなく同一processのcold start相当で一度だけ処理する。
+- 起動時ONはgenerationを更新して旧scheduleをcancelし、startup Workerをenqueueする。その実check開始時刻を新周期の起点として通常scheduleを再登録する。
+- 起動時OFFは、未来のnext target、現在intervalに一致するschedule種別、対応unique Workがすべて存在する場合はscheduleを維持する。期限切れ・欠落・不整合ならmail checkせず現在時刻からrebaseする。
+- `ACTION_TIME_CHANGED`では`System.currentTimeMillis()`と`SystemClock.elapsedRealtime()`のbaselineから時計補正量を求め、絶対値60秒以上のときだけrebaseする。`ACTION_TIMEZONE_CHANGED`はepoch値・generation・scheduleを変えず、UI日時の再評価だけを行う。
+- 通常workに`NetworkType.CONNECTED` constraintは付けない。Worker開始後に端末の接続状態を確認し、`DEVICE_OFFLINE`と、ネットワーク利用可能後の`SERVER_UNAVAILABLE`を区別する。両方とも連続失敗へ含める。
+- failure countとthreshold notification済み状態はDataStoreに永続化する。成功（新着0通を含む）でcountとnotification状態をresetし、同じ失敗episodeで通知を繰り返さない。
 
 ---
 
@@ -713,24 +831,22 @@ UIやRoomからKeystoreを直接操作せず、`CredentialStore`を経由する�
 
 ---
 
-## 24. receiver
+## 24. receiver / 再起動復旧
 
-Android BroadcastReceiver類を配置する。
+Android BroadcastReceiver類およびシステム復旧メカニズムを配置する。
 
 初期候補:
 
 ```text
-BootCompletedReceiver
 AlarmActionReceiver
+BootCompletedReceiver (必要時のみ補助利用)
 ```
 
-### 24.1 BootCompletedReceiver
+### 24.1 再起動後の復帰 (Restart Recovery)
 
-端末再起動後の監視復帰を担当する。
+端末再起動後の監視復帰は、`WorkManager` 自身の持つ永続スケジュール機構を優先利用する（WorkManagerはOSの内部データベースにタスク情報を維持し、端末再起動後もシステムによって自動的にスケジュールを復元する）。
 
-AndroidバージョンごとのForeground Service起動制限を考慮し、Receiver自身へ複雑な監視ロジックを持たせない。
-
-必要な場合はユーザー操作を伴う復帰フローとする。
+`BootCompletedReceiver` は、WorkManagerの自動復元で補いきれない環境や補助的な再リトライ・トリガーが必要な場合のみ、後Phaseで最小限実装する方針とする。
 
 ---
 
@@ -820,7 +936,7 @@ Room / DataStore / Keystore
 監視側:
 
 ```text
-MonitoringService
+WorkManager (Worker) / [補助: AlarmManager]
  ↓
 MailCheckCoordinator
  ├─ MailReceiver
@@ -873,9 +989,9 @@ Room DAO -> AlarmController
 - 停止操作
 
 ### Phase 6
-- Foreground Service
-- 一定間隔ポーリング骨格
-- ダミーメール受信処理による検証
+- WorkManagerによるスケジューリング骨格
+- 目標ポーリング（pollIntervalMinutes）管理
+- MailCheckCoordinatorとダミーメール受信処理による検証
 
 ### Phase 7
 - POP3S
