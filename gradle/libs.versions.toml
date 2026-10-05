@@ -15,6 +15,7 @@ appcompat = "1.7.1"
 ksp = "2.3.10"
 serializationJson = "1.8.1"
 work = "2.10.0"
+angusMail = "2.0.4"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -40,6 +41,7 @@ androidx-datastore-preferences = { group = "androidx.datastore", name = "datasto
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serializationJson" }
 androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
+angus-mail = { group = "org.eclipse.angus", name = "jakarta.mail", version.ref = "angusMail" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
