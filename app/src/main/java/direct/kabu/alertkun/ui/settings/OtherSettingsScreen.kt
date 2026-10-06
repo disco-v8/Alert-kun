@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -37,6 +38,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import direct.kabu.alertkun.R
 import direct.kabu.alertkun.model.AppLanguage
+import direct.kabu.alertkun.model.AlarmSoundType
+import direct.kabu.alertkun.model.AlarmMode
+import direct.kabu.alertkun.model.VibrationPattern
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,6 +67,11 @@ fun OtherSettingsScreen(
         checkImmediatelyOnAppStart = monitoringSettings.checkImmediatelyOnAppStart
     }
     var pendingAlarm by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var testSound by remember { mutableStateOf<String?>(null) }
+    var testSoundType by remember { mutableStateOf(AlarmSoundType.ALARM) }
+    var testVibration by remember { mutableStateOf(VibrationPattern.PATTERN_1) }
+    var testCount by remember { mutableStateOf(AlarmMode.ONCE) }
+    val vibrationPreview = rememberVibrationPreview()
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         pendingAlarm?.invoke()
         pendingAlarm = null
@@ -81,7 +92,7 @@ fun OtherSettingsScreen(
         topBar = { TopAppBar(title = { Text(stringResource(R.string.settings)) }, navigationIcon = { TextButton(onClick = onBack) { Text(stringResource(R.string.back)) } }) },
     ) { innerPadding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(innerPadding).padding(24.dp),
+            modifier = Modifier.fillMaxSize().padding(innerPadding).verticalScroll(rememberScrollState()).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(stringResource(R.string.languages))
@@ -101,15 +112,31 @@ fun OtherSettingsScreen(
                 Text(stringResource(R.string.check_immediately_on_app_start))
             }
             Button(onClick = { val poll = pollInterval.toIntOrNull(); val threshold = failureThreshold.toIntOrNull(); if (pollValid && thresholdValid) monitoringViewModel.update(poll!!, threshold!!, monitoringEnabled, checkImmediatelyOnAppStart) }, enabled = pollValid && thresholdValid, modifier = Modifier.fillMaxWidth().testTag("monitoring_save")) { Text(stringResource(R.string.save_monitoring_settings)) }
+            HorizontalDivider(Modifier.testTag("alarm_test_divider"))
             Text(stringResource(R.string.developer_tools))
             Button(onClick = monitoringViewModel::queueMatching, modifier = Modifier.fillMaxWidth().testTag("queue_dummy_matching_mail")) { Text(stringResource(R.string.queue_dummy_matching_mail)) }
             Button(onClick = monitoringViewModel::queueNonMatching, modifier = Modifier.fillMaxWidth().testTag("queue_dummy_non_matching_mail")) { Text(stringResource(R.string.queue_dummy_non_matching_mail)) }
             Button(onClick = monitoringViewModel::runNow, modifier = Modifier.fillMaxWidth().testTag("run_poll_now")) { Text(stringResource(R.string.run_poll_now)) }
             OutlinedButton(onClick = monitoringViewModel::simulateFailure, modifier = Modifier.fillMaxWidth().testTag("simulate_poll_failure")) { Text(stringResource(R.string.simulate_poll_failure)) }
-            Text(stringResource(R.string.manual_alarm_note))
+            Text(stringResource(R.string.manual_alarm_note), Modifier.testTag("alarm_test_note"))
+            AlarmPermissionControls()
+            AlarmSoundSelector(testSound, testSoundType,
+                onSoundTypeSelected = { type ->
+                    if (type != testSoundType) {
+                        testSoundType = type
+                        testSound = null
+                    }
+                },
+                onSelected = { testSound = it })
+            VibrationPatternSelector(testVibration, "alarm_test_vibration") { pattern ->
+                if (pattern != testVibration) {
+                    testVibration = pattern
+                    vibrationPreview.select(pattern)
+                }
+            }
+            AlarmCountSelector(testCount, "alarm_test_count") { testCount = it }
             AlarmTestControls(
-                onOnce = { startWithPermission { viewModel.startOnce() } },
-                onUntilStopped = { startWithPermission { viewModel.startUntilStopped() } },
+                onStart = { startWithPermission { viewModel.start(testCount, testSound, testVibration, testSoundType) } },
                 onStop = { viewModel.stop() },
             )
         }
@@ -118,19 +145,14 @@ fun OtherSettingsScreen(
 
 @Composable
 fun AlarmTestControls(
-    onOnce: () -> Unit,
-    onUntilStopped: () -> Unit,
+    onStart: () -> Unit,
     onStop: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Button(
-            onClick = onOnce,
-            modifier = Modifier.fillMaxWidth().testTag("alarm_test_once"),
-        ) { Text(stringResource(R.string.test_alarm_once)) }
-        Button(
-            onClick = onUntilStopped,
-            modifier = Modifier.fillMaxWidth().testTag("alarm_test_until_stopped"),
-        ) { Text(stringResource(R.string.test_alarm_until_stopped)) }
+            onClick = onStart,
+            modifier = Modifier.fillMaxWidth().testTag("alarm_test_start"),
+        ) { Text(stringResource(R.string.test_alarm)) }
         OutlinedButton(
             onClick = onStop,
             modifier = Modifier.fillMaxWidth().testTag("alarm_test_stop"),

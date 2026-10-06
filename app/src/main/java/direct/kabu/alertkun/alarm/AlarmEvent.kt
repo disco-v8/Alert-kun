@@ -1,6 +1,7 @@
 package direct.kabu.alertkun.alarm
 
 import direct.kabu.alertkun.model.AlarmMode
+import direct.kabu.alertkun.model.AlarmSoundType
 import direct.kabu.alertkun.model.VibrationPattern
 
 /** Immutable, post-rule-evaluation input for Android alarm delivery. */
@@ -12,6 +13,9 @@ data class AlarmEvent(
     val soundUri: String?,
     val vibrationPattern: VibrationPattern,
     val alarmMode: AlarmMode,
+    val mailFrom: String? = null,
+    val receivedAtEpochMillis: Long? = null,
+    val soundType: AlarmSoundType = AlarmSoundType.ALARM,
 ) {
     init {
         require(mailId.isNotBlank())

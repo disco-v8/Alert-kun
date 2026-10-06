@@ -9,6 +9,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AlarmDomainTest {
+    @Test fun repeatingPatternsStartImmediatelyAndRestBetweenPatterns() {
+        assertEquals(null, AlarmVibration.repeatingTimings(VibrationPattern.NONE))
+        for (pattern in listOf(VibrationPattern.PATTERN_1, VibrationPattern.PATTERN_2, VibrationPattern.PATTERN_3)) {
+            val once = AlarmVibration.timings(pattern)!!
+            val repeated = AlarmVibration.repeatingTimings(pattern)!!
+            assertArrayEquals(once + longArrayOf(1_000L), repeated)
+            assertEquals(0L, repeated.first())
+            assertArrayEquals(once, AlarmVibration.timings(pattern))
+        }
+    }
     @Test fun vibrationPatternsMapToDistinctTimings() {
         assertEquals(null, AlarmVibration.timings(VibrationPattern.NONE))
         assertArrayEquals(longArrayOf(0, 300), AlarmVibration.timings(VibrationPattern.PATTERN_1))

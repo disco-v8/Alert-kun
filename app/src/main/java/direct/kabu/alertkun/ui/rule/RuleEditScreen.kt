@@ -16,7 +16,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -27,15 +27,19 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import direct.kabu.alertkun.model.AlarmMode
 import direct.kabu.alertkun.model.RuleTarget
-import direct.kabu.alertkun.model.VibrationPattern
 import direct.kabu.alertkun.R
+import direct.kabu.alertkun.ui.settings.AlarmPermissionControls
+import direct.kabu.alertkun.ui.settings.AlarmSoundSelector
+import direct.kabu.alertkun.ui.settings.rememberVibrationPreview
+import direct.kabu.alertkun.ui.settings.AlarmCountSelector
+import direct.kabu.alertkun.ui.settings.VibrationPatternSelector
 
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
@@ -52,6 +56,7 @@ fun RuleEditScreen(
     }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val rule = state.rule
+    val vibrationPreview = rememberVibrationPreview()
 
     Scaffold(
         topBar = {
@@ -94,23 +99,25 @@ fun RuleEditScreen(
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             )
-            EnumSelector(
-                label = stringResource(R.string.vibration),
-                selected = rule.vibrationPattern,
-                options = VibrationPattern.entries,
-                labelFor = ::vibrationLabel,
-            ) { pattern -> viewModel.update { it.copy(vibrationPattern = pattern) } }
-            EnumSelector(
-                label = stringResource(R.string.alarm_mode),
-                selected = rule.alarmMode,
-                options = AlarmMode.entries,
-                labelFor = ::alarmModeLabel,
-            ) { mode -> viewModel.update { it.copy(alarmMode = mode) } }
-            Row {
-                Text(stringResource(R.string.enabled), modifier = Modifier.weight(1f))
-                Switch(checked = rule.enabled, onCheckedChange = { value -> viewModel.update { it.copy(enabled = value) } })
+            VibrationPatternSelector(rule.vibrationPattern, "rule_vibration") { pattern ->
+                if (pattern != rule.vibrationPattern) {
+                    viewModel.update { it.copy(vibrationPattern = pattern) }
+                    vibrationPreview.select(pattern)
+                }
             }
-            Text(stringResource(R.string.sound_later))
+            AlarmCountSelector(rule.alarmMode, "rule_alarm_count") { mode ->
+                viewModel.update { it.copy(alarmMode = mode) }
+            }
+            RuleEnabledCheckbox(rule.enabled) { value ->
+                viewModel.update { it.copy(enabled = value) }
+            }
+            RuleBackgroundColorSelector(rule.backgroundColor) { color ->
+                viewModel.update { it.copy(backgroundColor = color) }
+            }
+            AlarmSoundSelector(rule.soundUri, rule.soundType,
+                onSoundTypeSelected = { type -> viewModel.update { it.withSoundType(type) } },
+                onSelected = { sound -> viewModel.update { it.copy(soundUri = sound) } })
+            AlarmPermissionControls()
             state.error?.let { error -> Text(stringResource(error.messageResource())) }
             Button(
                 onClick = { viewModel.save(onSaved) },
@@ -118,6 +125,18 @@ fun RuleEditScreen(
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(stringResource(R.string.save)) }
         }
+    }
+}
+
+@Composable
+internal fun RuleEnabledCheckbox(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.testTag("rule_enabled"),
+        )
+        Text(stringResource(R.string.enabled))
     }
 }
 
@@ -130,8 +149,6 @@ private fun RuleEditError.messageResource(): Int = when (this) {
 }
 
 @Composable private fun targetLabel(value: RuleTarget) = stringResource(when (value) { RuleTarget.SUBJECT -> R.string.target_subject; RuleTarget.BODY -> R.string.target_body; RuleTarget.SUBJECT_AND_BODY -> R.string.target_subject_and_body })
-@Composable private fun vibrationLabel(value: VibrationPattern) = stringResource(when (value) { VibrationPattern.NONE -> R.string.vibration_none; VibrationPattern.PATTERN_1 -> R.string.vibration_pattern_1; VibrationPattern.PATTERN_2 -> R.string.vibration_pattern_2; VibrationPattern.PATTERN_3 -> R.string.vibration_pattern_3 })
-@Composable private fun alarmModeLabel(value: AlarmMode) = stringResource(if (value == AlarmMode.ONCE) R.string.alarm_once else R.string.alarm_until_stopped)
 
 @Composable
 private fun <T> EnumSelector(
@@ -139,15 +156,18 @@ private fun <T> EnumSelector(
     selected: T,
     options: List<T>,
     labelFor: @Composable (T) -> String,
+    tag: String? = null,
     onSelected: (T) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Column {
         Text(label)
-        OutlinedButton(onClick = { expanded = true }) { Text(labelFor(selected)) }
+        OutlinedButton(onClick = { expanded = true },
+            modifier = if (tag != null) Modifier.testTag(tag) else Modifier) { Text(labelFor(selected)) }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { option ->
                 DropdownMenuItem(
+                    modifier = if (tag != null) Modifier.testTag("${tag}_${option}") else Modifier,
                     text = { Text(labelFor(option)) },
                     onClick = { onSelected(option); expanded = false },
                 )

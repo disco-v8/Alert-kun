@@ -12,6 +12,7 @@ data class MailAccount(
     val deleteAfterReceive: Boolean,
     val trustedCertificateId: String?,
     val enabled: Boolean,
+    val serverDeletePolicy: ServerDeletePolicy = ServerDeletePolicy.NEVER,
 )
 
 enum class MailProtocol {

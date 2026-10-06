@@ -86,6 +86,7 @@ private fun RuleListItem(rule: AlertRule, onEditRule: (String) -> Unit, onCopyRu
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(rule.name)
+                    MailColorSample(rule.backgroundColor)
                     Text(
                         stringResource(
                             R.string.rule_search_description,
@@ -133,9 +134,7 @@ private fun targetLabel(value: RuleTarget): String = stringResource(
 )
 
 @Composable
-private fun alarmModeLabel(value: AlarmMode): String = stringResource(
-    if (value == AlarmMode.ONCE) R.string.alarm_once else R.string.alarm_until_stopped,
-)
+private fun alarmModeLabel(value: AlarmMode): String = direct.kabu.alertkun.ui.settings.alarmCountLabel(value)
 
 @Composable
 private fun vibrationLabel(value: VibrationPattern): String = stringResource(

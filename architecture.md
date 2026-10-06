@@ -1,1088 +1,261 @@
-# アラートくん 内部設計書
+# AlertKun 内部設計
 
-## 1. 文書情報
+この文書は2026-10-06時点の作業ツリーの実装を基準とする内部設計・動作仕様の正本である。操作方法は[user-guide.md](user-guide.md)、開発時の厳守事項は[AGENTS.md](AGENTS.md)、概要とビルドの入口は[README.md](README.md)を参照する。将来案と現在の実装を区別し、変更時はコード・テストと一緒に更新する。
 
-- アプリ名: アラートくん
-- 英名 / プロジェクト名: AlertKun
-- Application ID / namespace: `direct.kabu.alertkun`
-- 対象: Android
-- 言語: Kotlin
-- UI: Jetpack Compose
-- 目的: メールをトリガーとしたAndroid用システム監視・警報アプリ
+## 1. 実装範囲と構成
 
-本書は「アラートくん 仕様書」に基づき、初期実装およびMVP開発で使用する内部アーキテクチャを定義する。
+単一appモジュールのKotlin / Jetpack Composeアプリ。namespace / applicationIdはdirect.kabu.alertkun。minSdk 24、compileSdk / targetSdk 37、versionName 1.0。UIは英語・日本語。実通信はPOP3 / POP3S / IMAP4 / IMAPSに対応する。
 
----
+| パッケージ | 責務 |
+| --- | --- |
+| model | Android frameworkから独立したAccount・Rule・ReceivedMail・設定enum |
+| ui/main・account・rule・mail・settings・theme | Compose画面、表示mapper、ViewModel |
+| data/entity・dao・database・repository・preferences | Room、DataStore、domain変換、Repository |
+| mail/common・pop3・imap・parser | 通信、安定したリモートID、本文抽出、POP3削除 |
+| rules | 純粋なRuleEngine |
+| monitoring | WorkManager登録、1回の確認、実行調停、状態・失敗管理 |
+| alarm | 通知、MediaPlayer、振動、有限回数制御、継続警報開始・停止 |
+| security | CredentialStore、Android Keystore |
+| receiver | 時計・タイムゾーン変更への対応 |
 
-## 2. 設計上の最優先事項
+Composeはメール通信・Room・Keystore・ルール判定本体・警報制御本体を直接実装しない。ViewModelは操作と画面状態を調整し、処理本体はRepositoryや専用クラスへ委譲する。AlarmPermissionControlsなどのUIは権限操作のためにControllerの状態を参照する。
 
-内部設計では、以下を最優先する。
+監視の主経路:
 
-1. メールを取りこぼさないこと
-2. 同じメールを誤って何度も警報しないこと
-3. Android OS環境下で監視継続性を最優先し、24時間365日復帰可能であること
-4. 監視機能自体の異常をユーザーが認識できること
-5. 認証情報を安全に扱うこと
-6. 長期間安定して動作すること
+WorkManager → MailCheckWorker → MailCheckCoordinator → MailReceiver → Room保存 → RuleEngine → poll全体の候補選定 → AlarmController → Room処理確定 → POP3削除判定
 
-UIの簡便さよりも、受信処理の安定性、重複防止、障害時の復帰、警報の確実性を優先する。
+## 2. 永続化
 
----
+### Room
 
-## 3. 全体方針
+AlertKunDatabaseの現在のschemaはv4。accounts / rules / received_mailsを保存する。Entityとdomain modelはmapperで分離する。enumは安定した名前で保存し、Android定数やCompose色値を保存しない。
 
-以下の責務を分離する。
+| Migration | 追加内容 | 既存データの扱い |
+| --- | --- | --- |
+| 1 → 2 | rules / received_mailsのbackgroundColor | DEFAULT |
+| 2 → 3 | rulesのsoundType | ALARM。既存soundUriを保持 |
+| 3 → 4 | accountsのserverDeletePolicy | NEVER。旧deleteAfterReceiveの値から削除を有効にしない |
 
-- UI
-- 永続データ
-- メール受信
-- ルール判定
-- 監視制御
-- 警報
-- セキュリティ
-- OSイベント受信
+1→4のmigrationを登録し、破壊的fallbackは使用しない。schema JSONはapp/schemas以下に置く。AlarmModeのTHREE_TIMES / FIVE_TIMES追加は既存TEXT列を利用し、schema変更を伴わない。旧ONCE / UNTIL_STOPPEDはそのまま読み込む。
 
-`MainActivity` やWorkManagerのWorkerへ処理を集中させない。
+ReceivedMailの重要な情報はid、accountId、remoteMessageId、receivedAtEpochMillis、From、ヘッダー、Subject、必要な本文、bodyFetched、processingState、alertTriggered、matchedRuleId、backgroundColor。UNIQUE(accountId, remoteMessageId)で重複保存を防ぐ。UIDL / UIDだけを先に保存せず、再処理に必要なデータとRECEIVEDを同じ行の挿入で確定する。
 
-特に、メール通信、ルール判定、通知、Room、Keystore、OSイベント処理は独立した責務として実装する。
+### DataStore
 
----
+軽量設定とMonitoringStatusRepositoryの状態を保存する。確認間隔、連続失敗閾値、監視ON/OFF、起動時確認、言語に加え、確認開始・完了・成功時刻、次回target、scheduleGeneration、schedule種別、連続失敗・異常通知状態などを保持する。
 
-## 4. パッケージ構成
+mailRetentionDaysはモデル・永続化・validationに存在し、default 7、範囲1～99。ただし現在、保存日数の設定UI、期限による一覧絞り込み、定期削除の呼び出しは存在しない。ReceivedMail一覧は保存済みの全件を表示する。retentionによる自動削除を実装済みとして扱わない。
 
-ルートパッケージ:
+### 認証情報
 
-```text
-direct.kabu.alertkun
-```
+AndroidKeystoreCredentialStoreはAndroid KeystoreのAES鍵を使用したAES/GCM/NoPaddingでパスワードを暗号化し、IVと暗号文を専用SharedPreferencesへ保存する。RoomにはcredentialKeyだけを置く。パスワードをRoom / DataStore / ログへ平文保存しない。
 
-初期構成:
+AccountCredentialSaverはRoomとCredentialStoreが共通トランザクションを持てないため、Accountを一度disabledで保存し、認証情報の保存・読戻しを検証してから最終状態を公開する。失敗時は補償処理を試み、復旧失敗時はdisabledへ退避して失敗を返す。プロセス停止を含めた完全な分散トランザクションではない。
 
-```text
-direct.kabu.alertkun
+保存済みパスワードはUIへ実値を戻さず固定マスクを表示する。空入力は既存値を保持し、新しい入力がある場合だけ変更する。マスク文字列はeditor値・保存値として使わない。
 
-├── ui
-│   ├── main
-│   ├── account
-│   ├── rule
-│   ├── mail
-│   ├── settings
-│   └── theme
-│
-├── data
-│   ├── database
-│   ├── entity
-│   ├── dao
-│   ├── repository
-│   └── preferences
-│
-├── mail
-│   ├── common
-│   ├── pop3
-│   ├── imap
-│   └── parser
-│
-├── rules
-├── monitoring
-├── alarm
-├── security
-├── receiver
-└── model
-```
+ManifestはallowBackup=true。現在のbackup / data extraction規則はpending_alarm.xmlを除外するが、暗号化認証情報のSharedPreferencesは除外していない。Keystore鍵を含む端末移行・復元の成功は保証しない。復元後は認証情報の再入力が必要になる場合がある。
 
-必要以上の細分化は避けるが、責務の混在は避ける。
+## 3. メール通信と識別
 
----
+JakartaMailReceiverはAngus Mailで受信する。POP3S / IMAPSはimplicit TLSと標準証明書・ホスト名検証を使用する。POP3 / IMAP4は非TLSで、STARTTLSは有効にしない。接続・読取・書込タイムアウトは各30秒であり、Coordinator全体の制限時間ではない。
 
-## 5. UI層
+受信対象はINBOX。READ_ONLYで開き、IMAPの既読変更やexpungeを行わない。接続テストは接続・認証と最小限の確認だけを行い、削除経路を呼ばない。
 
-### 5.1 方針
+- POP3の永続IDはUIDL。セッション内のメッセージ番号を保存しない。
+- IMAPの永続IDはUIDVALIDITYとUIDを組み合わせた文字列。UIDVALIDITY変更後の別メールを混同しない。
+- 同一IDでもAccountが異なれば別メールとして扱う。
+- 現在のfetchNewMessagesはサーバー上のメール一覧のヘッダーを取得する。既受信メールの除外は最終的にRoom UNIQUE制約で行う。サーバー側差分取得やUIDL一覧だけによる先行除外を実装済みとして扱わない。
 
-UIはJetpack Composeで実装する。
+本文が必要と判断された場合、対象リモートIDの本文を別途取得する。plain textを優先し、HTMLしかない場合はタグ等を除去する。添付はローカル保存・表示・ルール判定の対象にしない。ただしMIME content取得時の通信量について、添付の転送自体を完全に抑止する保証はない。
 
-UI層では以下を行わない。
+有効Accountがある場合はAccountMailReceiverがそれらを処理する。複数Accountの候補は1回のCoordinator全体で比較する。有効Accountが0件ならDummyMailReceiverへ切り替わる。これは開発確認用であり、実サーバーへの接続成功を意味しない。Dummyのキューと失敗再現はprocess-local。通常Account UIには、既存Accountを残したまま新規Accountを追加する専用操作が現在ない。
 
-- POP3 / IMAP通信
-- WorkManager Worker内部処理
-- Roomへの直接アクセス
-- Keystoreへの直接アクセス
-- ルール判定本体
-- 警報制御本体
+自己署名証明書のfingerprint確認・信頼登録は未実装。trustedCertificateIdはモデル上の予約情報であり、信頼管理機能の実装を意味しない。trust-allやホスト名検証無効化は禁止する。
 
-UIはViewModelを介してアプリ状態を表示・更新する。
+## 4. RECEIVED / PROCESSEDと復旧
 
-### 5.2 主な画面
+RECEIVEDは、安定したリモートIDと必要なローカルデータの保存完了。PROCESSEDは、ルール評価、poll全体の警報選定、必要な1件のhandoff、および処理結果の永続化が完了した状態。
 
-初期MVPでは最低限、以下の画面を想定する。
+MailCheckCoordinatorは各実行で次の順序を守る。
 
-- メイン画面
-- アカウント設定
-- ルール一覧
-- ルール編集
-- 受信メール一覧
-- 受信メール詳細
-- その他設定
+1. Rule一覧を取得する。
+2. 既存RECEIVEDを保存済みデータから評価する。
+3. サーバーからメールを取得し、必要なら本文を取得する。
+4. 新規メールをRECEIVEDとして保存する。重複挿入が拒否されたメールは再評価・再警報しない。
+5. 各メールの評価結果とAlarm候補を収集する。
+6. 全候補から最大1件を選び、AlarmControllerへhandoffする。
+7. 評価した全メールのPROCESSEDとsnapshotをbatch確定する。
+8. 削除ポリシーの対象を確認する。
 
-### 5.3 メイン画面
+ProductionのReceivedMailDao.finalizeBatchはRoomの単一トランザクションで、全対象がRECEIVEDであることを確認して更新する。matchedRuleId、backgroundColor、alertTriggered、processingStateを一緒に更新する。非採用・非一致メールも正常なpollではPROCESSEDになる。
 
-表示候補:
+handoff失敗時は次点を鳴らさず、batchを未確定のRECEIVEDとして残し、そのpollを失敗とする。削除を実行しない。後続pollで再処理できる。サーバー取得等が候補収集途中で失敗した場合もhandoff・batch確定・削除へ進まない。
 
-```text
-アラートくん
-監視中（5分毎）
+PROCESSED済みメールはサーバーに残っていても再警報しない。復旧対象はRECEIVED。ただしhandoff後・Room確定前のプロセス停止では次回再handoffの可能性が残る。外部副作用とRoomを跨ぐexactly-once保証は現在ない。
 
-最終確認: 2026/10/04 19:40
-次回確認予定: 2026/10/04 19:45頃
+## 5. RuleEngineと二段階priority
 
-[受信メール]
-[ルール設定]
-[アカウント設定]
-[その他設定]
-```
+RuleEngineはAndroid framework、Room、通信、通知から独立した純粋ロジック。有効Ruleについて検索文字列の部分一致を行い、大文字・小文字を区別しない。正規表現や完全一致の選択機能はない。
 
-監視状態はUI独自に保持せず、監視状態モデルから取得する。監視ON時は現在の`pollIntervalMinutes`を表示し、監視OFF時は周期を表示しない。日時は端末local timezoneの`YYYY/MM/DD HH:mm`で表示し、epoch millis・UNIX time・秒を直接表示しない。`nextScheduledCheckAtEpochMillis` は保証実行時刻ではなく目標予定時刻として「頃」を付けて表示する。
+| 検索対象 | 判定 |
+| --- | --- |
+| SUBJECT / 件名 | 件名に検索文字列を含む |
+| BODY / 本文 | 本文に検索文字列を含む |
+| SUBJECT_AND_BODY / 件名と本文 | 件名または本文に含む。ANDではない |
 
----
+1メール内の一致Ruleはpriority昇順、同値ならRule id昇順で1件を選ぶ。数値が小さいほど高優先。
 
-## 6. ViewModel
+現在の本文取得判断には制約がある。取得済みデータで一致RuleがあればMatchを先に返し、未取得本文が必要な別RuleがあってもBodyRequiredを返さない。したがって件名に低優先Ruleが一致すると、本文の高優先Ruleを評価しない場合がある。本文なしで一致がなく、有効な本文対象Ruleがある場合だけ本文取得へ進む。この点は理想上の「全Ruleを評価して最優先」と区別する。
 
-画面ごとに必要に応じてViewModelを用意する。
+MailCheckCoordinatorは各メールの最優先RuleからPendingAlarmCandidateを作る。保持情報はreceivedMailId、accountId、remoteMessageId、matchedRuleId、priority、receivedAtEpochMillis、AlarmEvent。poll全体の選定順は次の通り。
 
-例:
+1. priority昇順。
+2. receivedAtEpochMillis降順（アプリが保存した日時が新しいメール）。
+3. accountId昇順。
+4. remoteMessageId昇順。
+5. receivedMailId昇順。
 
-```text
-MainViewModel
-AccountViewModel
-RuleListViewModel
-RuleEditViewModel
-MailListViewModel
-SettingsViewModel
-```
+候補の列挙順をtie-breakに使用しない。ただしreceivedAtEpochMillis自体は初回保存時の時刻であり、メールヘッダーDateやサーバー上の並びを表さない。
 
-ViewModelの責務:
+比較範囲は復旧RECEIVEDと今回の新規メール、全有効Accountを含む1回のCoordinator実行。候補0件ならhandoffなし、1件以上なら最大1件。採用メールだけalertTriggered=true。他の一致メールはfalseのまま、各メール自身のmatchedRuleIdと色を保存する。Rule非一致もfalse / null / DEFAULTでPROCESSEDになる。
 
-- 画面状態の保持
-- ユーザー操作の受け付け
-- Repository呼び出し
-- UI向け状態への変換
+AlarmEventのsoundType、soundUri、vibrationPattern、alarmModeなどは採用Ruleの値を使い、他候補の設定を混ぜない。AlarmControllerの「新しい警報で古い警報を置換する」方針は別責務として維持する。
 
-ViewModelへビジネスロジックを集中させない。
+## 6. Background color snapshot
 
----
+RuleのpresetはDEFAULT、DARK、PURPLE、RED、ORANGE、YELLOW、LIME、LIGHT_BLUE。ユーザー表示はデフォルト、黒系、紫系、赤系、オレンジ系、黄色系、黄緑系、水色系。
 
-## 7. model
+各メールの処理確定時に、そのメール自身が採用したRuleのbackgroundColorをReceivedMailへsnapshot保存する。poll全体で警報に採用されなかったメールにもその色を保存する。非一致・旧データはDEFAULT。表示時に現在のRuleから色を引き直さないため、Rule変更・削除後も過去メールの色は変わらない。Composeの具体的色・文字色はUI mapperだけで決める。
 
-アプリ内部で共通使用するデータ型を配置する。
+## 7. WorkManager監視
 
-候補:
+MonitoringSchedulerがunique workを登録し、MailCheckWorkerは1回のmail checkをCoordinatorへ委譲する。監視に常駐FGS、dataSync FGS、AlarmManager、Expedited Work、独自長時間WakeLock、長時間polling loopを使用しない。
 
-```text
-MailAccount
-AlertRule
-ReceivedMail
-MonitoringState
-MailCheckResult
-AlarmEvent
-```
+| 確認間隔 | 登録 |
+| --- | --- |
+| 1～14分 | unique OneTimeWorkRequestを正常な世代から自己再登録 |
+| 15～1500分 | unique PeriodicWorkRequest |
+| default | 5分。監視default OFF |
 
-Room Entityとアプリ内部モデルは可能な限り分離する。
+間隔は「確認開始時刻間の目標周期」であり、Androidの実行時刻保証ではない。NetworkType.CONNECTED constraintは付けず、Workerで端末offlineを判別して失敗として記録する。
 
-目的:
+### 実行調停とtarget
 
-- DB構造変更の影響を局所化する
-- メール受信部やRuleEngineへのDB依存を避ける
-- テストを容易にする
+process-local executionMutexでcheckを直列化する。scheduled WorkerはMutex取得後にDataStoreを再読込し、監視OFF、世代不一致、直前checkから算出したtargetより早い実行を判定する。near-skipでも現行世代のshort scheduleを失わない。
 
----
+runNowはscheduled checkのnear-skipを使わず、監視OFFでも単発確認できる。scheduleGenerationを更新せず、監視ONへ変更しない。
 
-## 8. data
+targetは実check開始時刻を端末local timezoneの分境界へ丸めてintervalを加える。秒0～30.000は現在分、30.001以降は次分。実測のlastCheckStartedAtEpochMillisは丸めない。interval変更・rebase時はその時点の時刻を基準にする。
 
-永続データを担当する。
+### scheduleGeneration
 
-### 8.1 保存方式
+監視設定保存によるschedule変更、起動時rebase、欠落・期限切れ・種別不整合の修復、大きな時計補正で世代を更新する。scheduled Workerは自身の世代が現在値と一致する場合だけ次workと次回targetを更新する。runNow、正常な既存scheduleを維持する起動時処理、timezone変更、60秒未満の時計補正では更新しない。
 
-```text
-DataStore
-    軽量設定
+### 起動・時計変更
 
-Room
-    構造化データ
+StartupReconcileGateにより同一processで起動時調整を一度だけ行う。監視OFFなら起動時checkなし。checkImmediatelyOnAppStartはdefault ONで、監視ON時に即時checkとschedule rebaseを行う。OFFなら正常なfuture scheduleを維持し、欠落・期限切れ・不整合のみcheckなしでrebaseする。
 
-Android Keystore
-    秘密情報
-```
+ACTION_TIME_CHANGEDはwall clockとelapsedRealtimeの差から補正量を判断し、基準があり絶対値60秒以上ならrebaseする。ACTION_TIMEZONE_CHANGEDは表示を再評価し、schedule / generationを変えない。
 
-の三分割とする。
+独自BOOT_COMPLETED受信・専用の再起動reconcileは未実装。WorkManager自身の永続work管理とアプリ起動時reconcileを、独自boot処理が実装済みという説明へ置き換えない。
 
-### 8.2 DataStore
+## 8. 失敗管理と表示
 
-以下のような軽量設定を保存する。
+MonitoringFailureKindでDEVICE_OFFLINEとSERVER_UNAVAILABLE、DNS、timeout、認証、TLS・証明書、protocolエラー等を区別する。連続失敗閾値は1～99、default 3。端末offlineも失敗countへ含める。新着0通を含む正常なcheckでcountと異常通知状態をresetする。
 
-- 受信間隔
-- メール保存日数
-- 連続失敗通知回数
-- 監視ON / OFF
-- その他アプリ設定
+通常の失敗ではWorkerの即時retry queueを作らず、次の通常pollで再確認する。キャンセルは伝播させる。監視異常通知は端末offlineかサーバー確認失敗かを利用者へ知らせる。認証・TLS等の詳細分類は接続テストUIで表示する。メイン画面に全分類や失敗countを表示する実装はない。
 
-### 8.3 Room
+メイン画面の「最終確認」は最後の成功時刻。「次回予定」は端末local timezoneでYYYY/MM/DD HH:mm頃と表示する。監視中で未確定なら未定、停止中ならなし。ReceivedMail一覧は件名、差出人、アプリの初回受信日時、snapshot色を表示し、本文詳細・matchedRuleId・alertTriggeredの表示UIはない。
 
-最低限、以下を想定する。
+## 9. 警報・有限回数
 
-```text
-accounts
-rules
-received_mails
-```
+UI名は「アラーム回数」。domain / 保存列名は既存のAlarmMode / alarmModeを維持する。
 
-UIDL / UIDについては、`received_mails` 内に保持するか、将来必要に応じて専用テーブルへ分離する。
+| AlarmMode | 音・振動 | 終了 |
+| --- | --- | --- |
+| ONCE | 1サイクル | 自動終了 |
+| THREE_TIMES | 3サイクル | 自動終了 |
+| FIVE_TIMES | 5サイクル | 自動終了 |
+| UNTIL_STOPPED | 継続再生・repeat振動 | Stop |
 
-### 8.4 パスワード
+有限回数はAlarmControllerのprocess内処理で、継続Service / exact alarm経路へ入れない。FiniteAlarmSequenceで回数を明示的に数え、各サイクルでMediaPlayerを新規作成する。isLooping=false、完了・エラーlistenerでreleaseし、次サイクルを明示的に開始する。
 
-パスワードはRoomへ平文保存しない。
+autoLoop metadataにより完了listenerが来ない音源への対策として、各サイクルにMediaPlayer.durationのtimerを併用してreleaseする。音源に複数フレーズが入っていても音源全体で1サイクル。音と振動を同時に開始し、次サイクルは振動1サイクルも完了するまで待つ。音源を開けない場合も振動と回数終了処理は進める。プロセス終了・OS制限による有限回数の完遂保証はない。
 
-アカウントデータにはKeystore側の認証情報を参照するためのキーのみ保持する。
+通知channelは警報音・振動なし。実音はMediaPlayer、振動はVibratorで行う。有限警報の通知は通常Stop actionなしで残り、音・振動だけが自動終了する。新警報・Stopでは古いplayer、timer、振動、残回数を破棄する。
 
----
+## 10. UNTIL_STOPPED・exact alarm・FGS
 
-## 9. MailAccount
+新規の自動開始経路はAlarmController → AlarmManager exact alarm → AlarmStartReceiver → AlarmPlaybackService。exact alarmは継続警報開始用だけで、監視scheduleには使用しない。AlarmPlaybackServiceは鳴動中だけのmediaPlayback FGSであり、監視や受信を担当しない。
 
-概念モデル:
+SCHEDULE_EXACT_ALARM、通知許可・channel有効状態等を確認する。権限不足やFGS開始失敗時は単発出力と説明通知へ退避し、通知の「警報を開始」からユーザー操作で開始できる経路を用意する。継続開始時のAudio Focus取得が拒否された場合は音を開始せず、振動とServiceは継続する。Workerはhandoff後に終了する。
 
-```text
-id
-name
-protocol
-host
-port
-username
-credentialKey
-deleteAfterReceive
-trustedCertificateId
-enabled
-```
+PendingAlarmStoreはtokenと最新AlarmEventを保持し、古いtokenの開始を拒否する。新警報で既存出力を置換し、queueを作らない。Stop actionはpending exact alarm、pending情報、音、振動、通知、Serviceを解除する。Serviceは自身の起動・foreground管理を担当し、実出力は同じAlarmControllerへ委譲する。プロセス・端末再起動後の無条件な継続再開は保証しない。
 
-無料版では1アカウントに制限するが、内部設計では最初から一意な`id`を持たせる。
+## 11. Sound type・AudioAttributes・振動preview
 
-将来のマルチアカウント化でDB構造を大きく作り直さないことを目的とする。
+| AlarmSoundType | 音源一覧・標準音 | AudioAttributes usage |
+| --- | --- | --- |
+| ALARM | TYPE_ALARM | USAGE_ALARM |
+| NOTIFICATION | TYPE_NOTIFICATION | USAGE_NOTIFICATION |
+| RINGTONE | TYPE_RINGTONE | USAGE_NOTIFICATION_RINGTONE |
 
----
+AlarmSoundMappingでAndroid定数へ変換する。soundUri指定があれば使用し、未指定・開けない場合はそのカテゴリのAndroid標準URIへfallbackする。種別変更時はUIで旧soundUriをnullへ戻す。picker結果は起動時の種別と現在種別が一致する場合のみ反映する。
 
-## 10. AlertRule
+ONCE / 3回 / 5回 / UNTIL_STOPPEDで同じsoundTypeのusageを使用する。CONTENT_TYPE_SONIFICATION。継続再生は同usageのAudio Focusを要求し、API 24～25では対応するlegacy streamを使用する。有限回数経路は明示的Audio Focus要求を行わない。端末音量変更、DND回避、channel音への移行は行わない。音量・マナーモード・DNDの最終挙動はAndroidと端末設定に従う。
 
-概念モデル:
+VibrationPatternはNONE / PATTERN_1 / PATTERN_2 / PATTERN_3。共通AlarmVibration.timingsはそれぞれなし、[0,300]、[0,200,150,200]、[0,350,150,350,150,350]ミリ秒。継続用のみ末尾1000ms休止を追加してrepeat index 0、有限回数とpreviewはrepeat -1。
 
-```text
-id
-name
-searchText
-target
-priority
-soundUri
-vibrationPattern
-alarmMode
-enabled
-```
+AndroidVibrationOutputはAPI 31以降のVibratorManager、26以降のVibrationEffect、minSdk 24向け互換分岐を扱う。Rule設定と確認用UIは共通VibrationPatternSelectorを使用する。変更時だけpreviewをcancelして新しい1サイクルを実行する。初期表示・同値再選択では実行しない。NONE、Lifecycle ON_STOP、Composable破棄でcancelする。所有tokenを検査するため、古いpreviewのcleanupは後から開始した本番警報を止めない。previewは通知・AlarmEvent・FGS・Room・alertTriggeredを変更しない。
 
-検索対象:
+## 12. ServerDeletePolicy
 
-```text
-SUBJECT
-BODY
-SUBJECT_AND_BODY
-```
+Account単位でIMMEDIATELY / AFTER_1_DAY / AFTER_1_WEEK / AFTER_10_DAYS / AFTER_15_DAYS / AFTER_1_MONTH / NEVERを保存する。既存Account、新規Account、未知値はNEVERへ倒す。旧deleteAfterReceiveフィールドは互換用に残るが、削除判定には使用しない。POP3 / POP3Sだけ実装し、IMAP4 / IMAPSの削除はno-op。UIもIMAPでは選択操作を無効にして説明する。
 
-警報方式:
+### 判定・時刻
 
-```text
-ONCE
-UNTIL_STOPPED
-```
+accountId + UIDLでRoomを照合し、PROCESSED、ID一致、有効なreceivedAtEpochMillis、閾値経過をすべて確認したメールだけ削除対象とする。alertTriggeredは条件にしない。Rule非一致・poll選定で非採用でも、正常にPROCESSEDなら対象になる。
 
-優先順位は数値で保持し、数値が小さいほど高優先とする。
+基準時刻はアプリの初回保存時刻receivedAtEpochMillis。メールDateヘッダーを使用しない。1 / 7 / 10 / 15日はそれぞれ固定24時間単位。1ヶ月はUTCのGregorianCalendarでMONTHを1加え、月末は翌月の有効な日へ丸める。固定30日ではない。lookup失敗、ID・Account不一致、RECEIVED、不明・未来時刻、overflow、protocol状態不明では削除しない。
 
-同一メールが複数ルールに一致した場合、最小値の優先順位を持つルール1件のみ発火させる。
+### POP3の実行順と失敗
 
----
+CoordinatorのhandoffとRoom batch確定が成功した後、Pop3ServerDeletionが専用の新しい接続で認証しUIDL一覧を確認する。全UIDL形式・一意性と全Room lookupを確認してからDELEへ進む。対象0件 / NEVERでは削除commandを送らない。
 
-## 11. rules
+全DELEの+OK確認後だけQUITを送信し、正常終了で削除を確定する。DELE途中のエラー・キャンセル・不明状態ではQUITを送らずsocketを閉じ、削除確定を避ける。QUIT送信後に応答が失われた場合の確定有無は不明なので、次回pollでサーバー状態を確認する。
 
-### 11.1 RuleEngine
+削除失敗は現在PROTOCOL_ERROR等のpoll失敗として既存の監視失敗管理へ渡す。保存済みPROCESSEDは維持し、次回pollで削除を再試行する。再保存・再警報しない。受信や接続テストのREAD_ONLYセッションを削除用に流用しない。
 
-ルール判定専門クラスとする。
+## 13. UI・権限・確認用UI
 
-入力:
+ユーザー向け文字列はEnglishのres/valuesと日本語のres/values-jaへ置く。初回のアプリ言語はEnglish。選択はDataStoreとAppCompatのlocale設定へ反映する。端末言語から日本語を自動選択する仕様ではない。
 
-```text
-件名
-本文
-有効なルール一覧
-```
+Account SettingsのPrimary Actionは接続テスト成功 → 設定を保存 → 保存済み。編集で検証状態を無効化する。接続テストは保存操作の代わりではない。
 
-出力:
+Settingsは言語、監視間隔・連続失敗閾値・監視ON/OFF・起動時確認と保存、Divider以下の開発者ツール、アラーム確認用UIで構成する。確認用sound / vibration / countはRuleへ保存しない。手動アラーム確認は本番と同じControllerを使う。Dummy受信操作は有効Accountが0件の場合の確認用。開発者UIは現在debug限定表示ではない。
 
-```text
-一致した最高優先ルール
-または一致なし
-```
+Manifestのアプリ宣言はINTERNET、ACCESS_NETWORK_STATE、VIBRATE、POST_NOTIFICATIONS、SCHEDULE_EXACT_ALARM、FOREGROUND_SERVICE、FOREGROUND_SERVICE_MEDIA_PLAYBACK。通知はAndroid 13以降でruntime許可、exact alarmはAndroid 12以降で設定画面への導線を持つ。DND policy access、battery最適化除外を要求するUIはない。
 
-RuleEngineでは以下を行わない。
+## 14. テスト・ビルド
 
-- 通知
-- DB保存
-- メール削除
-- メール通信
+JVMはJUnit 4で純粋ロジック、fake store / receiverで復旧・重複・priority・削除境界を検証する。AndroidX / Compose instrumentationでRoom migration・transaction、UI、MediaPlayer、振動、exact alarm / FGS / Stopを検証する。
 
-純粋な判定ロジックとして実装し、単体テスト可能にする。
+POP3削除・priorityの通信テストはapp/src/testSupportの使い捨てローカルTCPサーバーを利用し、本番メールを削除しない。認証値・本文全文をログに出さない。
 
-例:
+Windowsのリポジトリrootから実行:
 
-```text
-Subject = "ALERT WARN"
+- .\gradlew.bat test
+- .\gradlew.bat assembleDebug
+- .\gradlew.bat lint
+- .\gradlew.bat connectedAndroidTest（端末・エミュレータ接続時）
 
-ALERT priority=1
-WARN  priority=10
+テスト件数や端末結果は実行時に変わるため、この文書を固定の合格証明にしない。
 
-=> ALERTのみ採用
-```
+## 15. 未対応・設計履歴
 
----
+現在未対応なのは、自己署名証明書fingerprintの信頼登録、JSON Export / Import、保存期限による自動purgeと設定UI、メール本文詳細・添付表示、IMAP削除、独自boot時reconcile、公開release配布フロー。OAuth専用の認可UIはない。ライセンスは未選定でLICENSEファイルもない。
 
-## 12. mail
+初期のPhase 0～13は実装順の計画だった。現在はUI・Room・Rule・警報・WorkManager・POP3S・IMAPS・POP3削除まで実装が進んでおり、「Phase 6はDummyのみ」等を現状説明として残さない。自己署名信頼・boot対応・export/import・長期試験を、計画の存在だけで実装済みにしない。
 
-POP3 / IMAP通信を担当する。
-
-上位層はプロトコル差異を極力意識しない構造とする。
-
-共通インターフェース例:
-
-```kotlin
-interface MailReceiver {
-    suspend fun checkNewMessages(
-        account: MailAccount
-    ): MailCheckResult
-}
-```
-
-実装:
-
-```text
-Pop3MailReceiver
-ImapMailReceiver
-```
-
----
-
-## 13. POP3 / IMAP新着識別
-
-### 13.1 POP3
-
-POP3では`UIDL`を使用する。
-
-### 13.2 IMAP
-
-IMAPでは`UID`を使用する。
-
-メッセージ番号だけを新着識別には使用しない。
-
-UIDL / UIDは端末内へ永続保存し、アプリ再起動、Service再起動、端末再起動後も既知メールを判別可能にする。
-
-RAMだけでの管理は禁止する。
-
----
-
-## 14. メール取得方針
-
-新着確認時は必要以上に本文を取得しない。
-
-基本方針:
-
-```text
-新着識別
-↓
-Subject取得
-↓
-有効ルールを確認
-↓
-件名のみで処理可能なら本文取得を省略
-↓
-本文判定が必要なら本文取得
-```
-
-有効ルールに`BODY`または`SUBJECT_AND_BODY`が存在する場合、必要に応じて本文を取得する。
-
-添付ファイルは取得・保存・表示・判定しない。
-
----
-
-## 15. mail/parser
-
-### 15.1 MailBodyParser
-
-以下のようなメール本文から判定用テキストを生成する。
-
-```text
-text/plain
-text/html
-multipart/*
-```
-
-HTMLは判定可能なプレーンテキストへ変換する。
-
-添付ファイルは無視する。
-
----
-
-## 14. 監視方針とバックグラウンド実行戦略
-
-### 14.1 24/365監視方針と常駐FGSの完全廃止
-
-- **24時間365日の監視継続性**を最優先とする。
-- **常駐 Foreground Service（24時間365日常時起動・維持する FGS）は完全廃止・禁止**とする。Android 15以降の実行時間制限（最大6時間等）およびFGS制約により、常駐方式は長期運用と両立しないためである。
-- スケジューリングの主軸には `WorkManager` を使用する。
-- 1回のメール確認処理（mail check）は短時間タスクとして設計する。
-
-### 14.2 pollIntervalMinutes（目標ポーリング間隔）の意味
-
-- 設定範囲: 1～1500分（デフォルト 5分）
-- **意味**: 「目標ポーリング間隔」であり、時間精度の高い厳密な実行（Exact Execution）を保証するものではない。
-- Android OSの Doze モード、省電力機能、バックグラウンド実行制限により、実際の実行時刻が遅延することを許容する。
-- 時間の厳密性よりも、OS環境下で確実に生き残る監視継続性を最優先する。
-
-### 14.3 WorkManagerの役割と制約
-
-- スケジューリングの主軸として `WorkManager` を使用する。
-- 1～14分は、unique `OneTimeWorkRequest` を用いるshort scheduleで実装する。Workerは待機せず、実行の終了時に有効なgenerationでのみ次のshort workを登録する。
-- 15分以上は、unique `PeriodicWorkRequest` を用いるperiodic scheduleで実装する。14 / 15分が方式の境界である。
-- 1 Workerは1回のboundedなmail checkだけを実行する。Worker内で`while (true)`、長時間の`delay()`、次回周期までの待機を行わない。
-- WorkManagerの実行時刻はOS都合で遅延し得る。`pollIntervalMinutes`はmail check開始時刻間の目標周期であり、Exact Executionを保証しない。
-
-### 14.4 AlarmManager
-
-Phase 6の現実装では`AlarmManager`を監視スケジュールに使用しない。WorkManagerだけでshort / periodic scheduleを構成する。Exact Alarmおよび`SCHEDULE_EXACT_ALARM`は使用しない。
-
-### 14.5 Foreground処理
-
-常駐 Foreground Service、`foregroundServiceType="dataSync"`、常駐監視notificationは使用しない。Phase 6のmail checkは通常の`CoroutineWorker`で実行し、Expedited Work、Foreground Info、短命Serviceも使用しない。
-
-### 14.6 WakeLock
-
-アプリ独自のWakeLockは使用しない。WorkManagerのwake管理に委ね、長時間または常時のWakeLock保持は使用しない。
-
----
-
-## 15. メール取得方針と parser
-
-### 15.1 メール取得方針
-
-新着確認時は必要以上に本文を取得しない。
-
-基本方針:
-
-```text
-新着識別
-↓
-Subject取得
-↓
-有効ルールを確認
-↓
-件名のみで処理可能なら本文取得を省略
-↓
-本文判定が必要なら本文取得
-```
-
-有効ルールに`BODY`または`SUBJECT_AND_BODY`が存在する場合、必要に応じて本文を取得する。
-
-添付ファイルは取得・保存・表示・判定しない。
-
-### 15.2 mail/parser
-
-以下のようなメール本文から判定用テキストを生成する。
-
-```text
-text/plain
-text/html
-multipart/*
-```
-
-HTMLは判定可能なプレーンテキストへ変換する。
-
-添付ファイルは無視する。
-
----
-
-## 16. monitoring モジュール構造
-
-監視処理の中心となるモジュール構成。詳細な実行戦略やOS制約については「14. 監視方針とバックグラウンド実行戦略」を参照すること。
-
-### 16.1 概要
-
-14章で定義した監視方針に従い、`monitoring` パッケージのクラス群を構成する。
-
-### 16.2 監視スケジューラー（Worker / Scheduler）
-
-実装経路は次のとおりである。
-
-```text
-WorkManager
-↓
-MailCheckWorker
-↓
-MailCheckCoordinator
-↓
-MailReceiver
-↓
-Room
-↓
-RuleEngine
-↓
-AlarmController
-```
-
-主な責務:
-
-- `MonitoringScheduler`: start / stop / interval変更時の再登録、起動時reconcile、時刻変更rebase、runNowのenqueue、unique work名とschedule generationの管理
-- `MailCheckWorker`: 1回だけ`MailCheckCoordinator`を呼び出し、結果・監視状態を更新する実行アダプタ
-- `MailCheckWorker`間のmail checkはprocess-local `executionMutex`で直列化する。scheduled WorkerはMutex取得後にDataStoreを再読込し、直前のcheck開始時刻から計算した次targetより前ならCoordinatorをskipする。
-- skipしたshort Workerも、有効なgenerationなら次のshort workを再登録する。
-
-### 16.3 MailCheckCoordinator
-
-一回分のポーリング処理全体を統括する。Android Frameworkから独立しており、JVM単体テストが可能。Phase 6では`DummyMailReceiver`を使用し、POP3S / IMAPS実通信は未実装である。
-
-概念フロー:
-
-```text
-1. 既存`RECEIVED`をローカルデータからresumeする
-2. `MailReceiver`から新規mailを取得する
-3. 必要なら本文を取得する
-4. `accountId + remoteMessageId`のRoom UNIQUE制約で重複を防ぎつつ`RECEIVED`として保存する
-5. RuleEngineで評価する
-6. 一致時はAlarmControllerへhandoffした後に、非一致時はそのまま、`PROCESSED`へfinalizeする
-```
-
-### 16.4 MonitoringState（監視状態モデル）
-
-アプリ全体で共有する監視状態。
-
-プロパティ意味:
-
-- `isMonitoring`: 監視スケジュールが有効（アクティブ）か
-- `lastSuccessfulCheckAtEpochMillis`: 最後に正常完了したメール確認日時
-- `nextScheduledCheckAtEpochMillis`: 次回の目標予定時刻（※14.2で定義したとおり、OSの都合で遅延する可能性がある目標値）
-- `consecutiveFailureCount`: 連続失敗回数
-
-`MonitoringStatusRepository`は上記のUI状態に加え、DataStoreへ`monitoringEnabled`、failure notification済み状態、`lastCheckStartedAtEpochMillis`、`lastCheckCompletedAtEpochMillis`、`scheduleGeneration`、schedule種別を保持する。開始・完了は成功／失敗にかかわらない実測時刻であり、成功時刻とは混同しない。
-
-### 16.5 次回target・scheduleGeneration・runNow
-
-- `nextScheduledCheckAtEpochMillis`は予定であり、保証実行時刻ではない。UIは端末local timezoneの`YYYY/MM/DD HH:mm`で表示し、「頃」を付ける。epoch millisや秒を直接表示しない。
-- targetは実際のcheck開始時刻（rebase時は基準となる現在時刻）をlocal timeの分境界へ丸めてからintervalを加算する。秒が0～30.000なら現在分、30.001以降なら次分を基準にする。`lastCheckStartedAtEpochMillis`自体は丸めない。
-- interval変更は変更時刻を新しい周期の起点とし、過去のcheck開始時刻を流用しない。
-- `scheduleGeneration`はWorkManagerの非同期cancel後に旧Workerがscheduleを復活・上書きすることを防ぐ。scheduled Workerはenqueue時のgenerationを保持し、次work登録およびnext target更新前に現在generationとの一致を確認する。
-- generationは監視ON/OFF、interval変更、起動時rebase、期限切れ・欠落・不整合scheduleのrebase、大きなwall clock変更で更新する。runNow、正常scheduleを維持する起動時OFF、timezone変更、60秒未満の時計補正では更新しない。
-- runNowは単発の明示checkでありgenerationを変更しない。近接skipの対象外だが、実行後にscheduled Workerが近接skipされることはある。
-
-### 16.6 起動時reconcile・時計・ネットワーク・失敗状態
-
-- `checkImmediatelyOnAppStart`はBoolean、default ONである。`StartupReconcileGate`により、Activity再生成やonResumeではなく同一processのcold start相当で一度だけ処理する。
-- 起動時ONはgenerationを更新して旧scheduleをcancelし、startup Workerをenqueueする。その実check開始時刻を新周期の起点として通常scheduleを再登録する。
-- 起動時OFFは、未来のnext target、現在intervalに一致するschedule種別、対応unique Workがすべて存在する場合はscheduleを維持する。期限切れ・欠落・不整合ならmail checkせず現在時刻からrebaseする。
-- `ACTION_TIME_CHANGED`では`System.currentTimeMillis()`と`SystemClock.elapsedRealtime()`のbaselineから時計補正量を求め、絶対値60秒以上のときだけrebaseする。`ACTION_TIMEZONE_CHANGED`はepoch値・generation・scheduleを変えず、UI日時の再評価だけを行う。
-- 通常workに`NetworkType.CONNECTED` constraintは付けない。Worker開始後に端末の接続状態を確認し、`DEVICE_OFFLINE`と、ネットワーク利用可能後の`SERVER_UNAVAILABLE`を区別する。両方とも連続失敗へ含める。
-- failure countとthreshold notification済み状態はDataStoreに永続化する。成功（新着0通を含む）でcountとnotification状態をresetし、同じ失敗episodeで通知を繰り返さない。
-
----
-
-## 17. メール受信済みと処理済みの分離
-
-本設計では、
-
-- 受信済み
-- 処理済み
-
-を明確に分離する。
-
-### 17.1 受信完了の定義
-
-次の情報をRoomへ正常に保存できた時点を「受信完了」と定義する。
-
-```text
-UIDL / UID
-受信日時
-From
-必要なヘッダー
-Subject
-必要な本文
-processingState = RECEIVED
-```
-
-UIDL / UIDだけを先に単独保存しない。
-
-理由:
-
-```text
-UIDL保存
-↓
-本文保存前にプロセス停止
-```
-
-となった場合、再起動後に「既知UIDL」と誤判定して本文未取得メールをスキップする危険があるため。
-
-UIDL / UIDと受信データは同一のRoomトランザクション内で確定する。
-
-### 17.2 処理状態
-
-初期MVPでは以下の2状態とする。
-
-```kotlin
-enum class MailProcessingState {
-    RECEIVED,
-    PROCESSED
-}
-```
-
-意味:
-
-```text
-RECEIVED
-    サーバーから受信し、端末への保存が完了
-    ルール判定等は未完了の可能性がある
-
-PROCESSED
-    ルール判定および必要な警報処理への引き渡しが完了
-```
-
-警報発生有無は処理状態とは別に保持する。
-
-候補:
-
-```text
-processingState
-alertTriggered
-matchedRuleId
-```
-
-これにより以下を区別できる。
-
-```text
-受信済み・未処理
-処理済み・警報対象外
-処理済み・警報発生
-```
-
----
-
-## 18. クラッシュ復帰
-
-起動時または監視サービス再開時に、
-
-```text
-processingState = RECEIVED
-```
-
-のメールが残っていないか確認する。
-
-存在する場合は、原則としてサーバーから再取得せず、端末に保存済みのデータを用いてルール判定以降を再開する。
-
-これにより、
-
-```text
-メール受信
-↓
-Room保存
-↓
-RECEIVED
-↓
-ルール判定中にプロセス停止
-```
-
-となっても、次回起動時に未処理メールを復旧できる。
-
-### 18.1 UIDL / UIDの役割
-
-UIDL / UIDがDBに存在する場合:
-
-```text
-サーバーから同一メールを再取得しない
-```
-
-ただし、
-
-```text
-processingState = RECEIVED
-```
-
-であれば、
-
-```text
-ローカル処理は継続する
-```
-
-とする。
-
-つまり、
-
-```text
-受信済み != 処理済み
-```
-
-である。
-
----
-
-## 19. サーバー側メール削除
-
-削除設定が有効な場合でも、以下が完了するまでは削除しない。
-
-```text
-受信データのローカル保存
-ルール判定
-警報処理への引き渡し
-processingState = PROCESSED
-```
-
-途中でエラーになった場合はサーバー側メールを削除しない。
-
----
-
-## 20. alarm
-
-### 20.1 AlarmController
-
-警報処理専門クラス。
-
-入力候補:
-
-```text
-AlarmEvent
-```
-
-内容例:
-
-```text
-ruleName
-soundUri
-vibrationPattern
-alarmMode
-mailId
-```
-
-AlarmControllerはメール通信を知らない。
-
-### 20.2 通常通知と監視異常通知
-
-通常のメール警報と監視異常通知は区別する。
-
----
-
-## 21. 永久警報
-
-`UNTIL_STOPPED`の場合は、Androidの制約に従い、音・バイブレーションを一定間隔で繰り返す。
-
-通知には明示的な、
-
-```text
-[停止]
-```
-
-アクションを付ける。
-
-停止操作はロック画面中でも可能な通知設計とする。
-
-停止アクションは`AlarmActionReceiver`等で受信する。
-
----
-
-## 22. security
-
-### 22.1 CredentialStore
-
-Android Keystoreを使用して認証情報を保護する。
-
-UIやRoomからKeystoreを直接操作せず、`CredentialStore`を経由する。
-
-### 22.2 CertificateTrustStore
-
-自己署名証明書の明示的信頼情報を管理する。
-
----
-
-## 23. 自己署名証明書
-
-基本フロー:
-
-```text
-初回接続
-↓
-証明書情報取得
-↓
-フィンガープリント表示
-↓
-ユーザーが明示的に信頼
-↓
-信頼情報保存
-↓
-次回以降は一致確認
-```
-
-保存済み証明書と現在の証明書が一致しない場合は接続エラーとし、自動で信頼し直さない。
-
-証明書検証を完全に無効化する実装は禁止する。
-
----
-
-## 24. receiver / 再起動復旧
-
-Android BroadcastReceiver類およびシステム復旧メカニズムを配置する。
-
-初期候補:
-
-```text
-AlarmActionReceiver
-BootCompletedReceiver (必要時のみ補助利用)
-```
-
-### 24.1 再起動後の復帰 (Restart Recovery)
-
-端末再起動後の監視復帰は、`WorkManager` 自身の持つ永続スケジュール機構を優先利用する（WorkManagerはOSの内部データベースにタスク情報を維持し、端末再起動後もシステムによって自動的にスケジュールを復元する）。
-
-`BootCompletedReceiver` は、WorkManagerの自動復元で補いきれない環境や補助的な再リトライ・トリガーが必要な場合のみ、後Phaseで最小限実装する方針とする。
-
----
-
-## 25. 連続受信失敗
-
-`ConsecutiveFailureTracker`等の責務を設ける。
-
-成功:
-
-```text
-failureCount = 0
-```
-
-失敗:
-
-```text
-failureCount++
-```
-
-設定された回数に達した時点で監視異常通知を発生させる。
-
-設定範囲:
-
-```text
-1～99回
-```
-
-デフォルト:
-
-```text
-3回
-```
-
-### 25.1 正常と失敗の区別
-
-以下は正常:
-
-```text
-メールサーバーへ接続成功
-新着メール0通
-```
-
-以下は失敗例:
-
-```text
-DNS解決失敗
-TCP接続失敗
-接続タイムアウト
-TLS接続失敗
-証明書不一致
-認証失敗
-POP3 / IMAPプロトコルエラー
-その他、受信処理を正常完了できないエラー
-```
-
----
-
-## 26. Repository
-
-UIがRoomやDataStoreへ直接アクセスしないようRepositoryを設ける。
-
-候補:
-
-```text
-AccountRepository
-RuleRepository
-MailRepository
-SettingsRepository
-```
-
-Repositoryにより、上位層は実際の保存方式を意識しない。
-
----
-
-## 27. 初期依存関係
-
-```text
-UI
- ↓
-ViewModel
- ↓
-Repository
- ↓
-Room / DataStore / Keystore
-```
-
-監視側:
-
-```text
-WorkManager (Worker) / [補助: AlarmManager]
- ↓
-MailCheckCoordinator
- ├─ MailReceiver
- ├─ RuleEngine
- ├─ Repository
- └─ AlarmController
-```
-
-逆向き依存は避ける。
-
-禁止例:
-
-```text
-Pop3MailReceiver -> MainActivity
-RuleEngine -> Compose UI
-Room DAO -> AlarmController
-```
-
----
-
-## 28. 実装フェーズ
-
-### Phase 0
-- 現在のHello Android状態をGitへ初回Commit
-
-### Phase 1
-- パッケージ構成作成
-- 基本モデル作成
-
-### Phase 2
-- トップ画面
-- 各設定画面
-- Compose画面骨格
-
-### Phase 3
-- Room
-- DataStore
-- Repository
-
-### Phase 4
-- ルール作成・編集
-- RuleEngine
-- RuleEngine単体テスト
-
-### Phase 5
-- 通常通知
-- 通知音
-- バイブレーション
-- 永久警報
-- 停止操作
-
-### Phase 6
-- WorkManagerによるスケジューリング骨格
-- 目標ポーリング（pollIntervalMinutes）管理
-- MailCheckCoordinatorとダミーメール受信処理による検証
-
-### Phase 7
-- POP3S
-- UIDL管理
-- 受信保存
-
-### Phase 8
-- 受信状態 / 処理状態管理
-- サーバー側削除
-- クラッシュ復帰
-
-### Phase 9
-- IMAPS
-- UID管理
-
-### Phase 10
-- 自己署名証明書対応
-
-### Phase 11
-- BOOT_COMPLETED
-- Doze
-- バッテリー最適化関連
-- 端末再起動後復帰
-
-### Phase 12
-- JSON Export / Import
-
-### Phase 13
-- 異常系テスト
-- 長時間連続動作試験
-- 重複通知試験
-- 取りこぼし試験
-
----
-
-## 29. AI支援開発時のルール
-
-Codex、GitHub Copilot、Gemini等のAI支援ツールへ実装を依頼する場合、本書を設計上の基準とする。
-
-AIへ依頼する際は以下を遵守させる。
-
-1. 本書のパッケージ構成と責務分離を維持する
-2. `MainActivity`やForeground Serviceへ処理を集中させない
-3. Room、DataStore、Keystoreの役割分担を崩さない
-4. UIDL / UIDと受信メール保存を安全に扱う
-5. `RECEIVED`と`PROCESSED`を区別する
-6. 未処理の`RECEIVED`メールを復旧可能にする
-7. 証明書検証無効化を行わない
-8. パスワードやメール本文をログへ出力しない
-9. 仕様変更を行う場合は、実装だけでなく本書または仕様書も更新する
-10. 大規模変更はGitでコミット可能な単位に分割する
-
----
-
-## 30. 初期MVPで特に重視するテスト
-
-最低限、以下を重点的に確認する。
-
-- 同一UIDL / UIDを二重受信しない
-- `RECEIVED`状態から再開できる
-- 受信保存直後の強制終了から復帰できる
-- ルール判定途中の強制終了から復帰できる
-- 警報対象外メールが誤って鳴らない
-- 複数ルール一致時に最高優先ルールのみ鳴る
-- メール0通を受信失敗扱いしない
-- 接続失敗回数が正常受信で0へ戻る
-- サーバー削除設定時も未処理メールを削除しない
-- 端末再起動後に監視を復帰できる
-- 画面OFF / Doze環境で長時間監視できる
-- 自己署名証明書変更時に自動信頼しない
-
----
-
-## 31. 変更管理
-
-本設計書は初期アーキテクチャの基準とする。
-
-設計変更が必要になった場合は、
-
-```text
-仕様
-↓
-アーキテクチャ
-↓
-実装
-```
-
-の整合性を維持する。
-
-実装だけを先行して設計書と乖離させない。
-
----
-
-以上。
+過去の常駐MonitoringService案は廃止し、監視はWorkManagerへ統一した。継続警報専用AlarmPlaybackServiceとは区別する。Room migration履歴は本書2章とschema JSONに保持する。利用者向け操作の詳細はuser-guideへ、作業者向け規約はAGENTSへ集約する。

@@ -8,8 +8,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.material3.Surface
 import direct.kabu.alertkun.data.repository.AccountSaveFailure
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -64,33 +62,8 @@ fun AccountSettingsScreen(onBack: () -> Unit, viewModel: AccountSettingsViewMode
     val editor = state.editor
     var passwordVisible by remember(editor.id, editor.password.isEmpty()) { mutableStateOf(false) }
     val setEditor: (AccountEditor) -> Unit = viewModel::edit
-    Scaffold(modifier = modifier, topBar = { TopAppBar(title = { Text(stringResource(R.string.account_settings)) }, navigationIcon = { TextButton(onClick = onBack) { Text(stringResource(R.string.back)) } }) }, bottomBar = {
-        Surface(shadowElevation = 4.dp) {
-            Column(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Button(
-                    onClick = viewModel::test,
-                    enabled = editor.canConnect && !state.busy,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                    ),
-                    modifier = Modifier.fillMaxWidth().testTag("account_connection_test"),
-                ) {
-                    Text(stringResource(if (state.testStatus == AccountOperationStatus.RUNNING) R.string.connection_testing else R.string.test_connection))
-                }
-                AccountStatus(state.testStatus, R.string.connection_testing, R.string.connection_test_success, connectionFailureLabel(state.failureKind), "account_connection_status")
-                AccountStatus(state.saveStatus, R.string.account_saving, R.string.account_saved, saveFailureLabel(state.saveFailure), "account_save_status")
-                if (!state.busy) {
-                    Column(Modifier.testTag("account_connection_disabled_reason")) {
-                        editor.connectionIssues.forEach { issue ->
-                            Text(stringResource(if (issue == AccountConnectionIssue.PASSWORD && state.credentialLoading) R.string.account_password_checking else connectionIssueLabel(issue)))
-                        }
-                    }
-                }
-            }
-        }
-    }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Scaffold(modifier = modifier, topBar = { TopAppBar(title = { Text(stringResource(R.string.account_settings)) }, navigationIcon = { TextButton(onClick = onBack) { Text(stringResource(R.string.back)) } }) }) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState()).testTag("account_form").padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(editor.name, { setEditor(editor.copy(name = it)) }, enabled = !state.busy, label = { Text(stringResource(R.string.account_name)) }, modifier = Modifier.fillMaxWidth().testTag("account_name"))
             Text(stringResource(R.string.account_protocol))
             MailProtocol.entries.forEach { protocol ->
@@ -103,13 +76,55 @@ fun AccountSettingsScreen(onBack: () -> Unit, viewModel: AccountSettingsViewMode
                 AccountPasswordField(editor.password, { setEditor(editor.copy(password = it)) }, passwordVisible, { passwordVisible = !passwordVisible }, editor.hasSavedPassword, !state.busy, state.credentialLoading)
             }
             Row { Checkbox(editor.enabled, { setEditor(editor.copy(enabled = it)) }, enabled = !state.busy); Text(stringResource(R.string.enabled)) }
-            Button(onClick = viewModel::save, enabled = editor.canSave && !state.busy, modifier = Modifier.fillMaxWidth().testTag("account_save")) { Text(stringResource(R.string.save)) }
+            ServerDeletePolicySelector(editor.serverDeletePolicy, !state.busy && editor.protocol in listOf(MailProtocol.POP3, MailProtocol.POP3S)) {
+                setEditor(editor.copy(serverDeletePolicy = it))
+            }
+            if (editor.protocol in listOf(MailProtocol.IMAP4, MailProtocol.IMAPS)) Text(stringResource(R.string.server_delete_pop3_only))
+            AccountPrimaryActionContent(state, onTest = viewModel::test, onSave = viewModel::save)
             accounts.forEach { account ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(account.name)
                     TextButton(onClick = { viewModel.select(account) }, enabled = !state.busy, modifier = Modifier.testTag("account_edit_${account.id}")) { Text(stringResource(R.string.account_edit)) }
                     TextButton(onClick = { viewModel.delete(account) }, enabled = !state.busy, modifier = Modifier.testTag("account_delete_${account.id}")) { Text(stringResource(R.string.delete)) }
                 }
+            }
+        }
+    }
+}
+
+
+@Composable
+internal fun AccountPrimaryActionContent(state: AccountSettingsState, onTest: () -> Unit, onSave: () -> Unit) {
+    Button(
+        onClick = { if (state.primaryAction == AccountPrimaryAction.SAVE) onSave() else onTest() },
+        enabled = state.primaryEnabled,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+        ),
+        modifier = Modifier.fillMaxWidth().testTag("account_primary_action"),
+    ) {
+        if (state.busy) CircularProgressIndicator(Modifier.size(20.dp).testTag("account_primary_progress"))
+        Text(stringResource(when (state.primaryAction) {
+            AccountPrimaryAction.TEST -> R.string.test_connection
+            AccountPrimaryAction.TESTING -> R.string.connection_testing
+            AccountPrimaryAction.SAVE -> R.string.account_save_settings
+            AccountPrimaryAction.SAVING -> R.string.account_saving
+            AccountPrimaryAction.SAVED -> R.string.account_saved_action
+        }))
+    }
+    AccountStatus(state.testStatus, R.string.connection_testing, R.string.connection_test_success,
+        connectionFailureLabel(state.failureKind), "account_connection_status")
+    AccountStatus(state.saveStatus, R.string.account_saving, R.string.account_saved,
+        saveFailureLabel(state.saveFailure), "account_save_status")
+    if (!state.busy) {
+        Column(Modifier.testTag("account_connection_disabled_reason")) {
+            state.editor.connectionIssues.forEach { issue ->
+                Text(stringResource(if (issue == AccountConnectionIssue.PASSWORD && state.credentialLoading)
+                    R.string.account_password_checking else connectionIssueLabel(issue)))
+            }
+            if (state.primaryAction == AccountPrimaryAction.SAVE && state.editor.name.isBlank()) {
+                Text(stringResource(R.string.validation_name))
             }
         }
     }

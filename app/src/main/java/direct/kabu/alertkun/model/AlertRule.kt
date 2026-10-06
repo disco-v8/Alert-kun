@@ -9,9 +9,14 @@ data class AlertRule(
     val priority: Int,
     val soundUri: String?,
     val vibrationPattern: VibrationPattern,
-    val alarmMode: AlarmMode,
+    val alarmMode: AlarmMode = AlarmMode.ONCE,
     val enabled: Boolean,
-)
+    val backgroundColor: MailBackgroundColor = MailBackgroundColor.DEFAULT,
+    val soundType: AlarmSoundType = AlarmSoundType.ALARM,
+) {
+    fun withSoundType(type: AlarmSoundType): AlertRule =
+        if (type == soundType) this else copy(soundType = type, soundUri = null)
+}
 
 enum class RuleTarget {
     SUBJECT,
@@ -19,9 +24,11 @@ enum class RuleTarget {
     SUBJECT_AND_BODY,
 }
 
-enum class AlarmMode {
-    ONCE,
-    UNTIL_STOPPED,
+enum class AlarmMode(val finiteCount: Int?) {
+    ONCE(1),
+    THREE_TIMES(3),
+    FIVE_TIMES(5),
+    UNTIL_STOPPED(null),
 }
 
 enum class VibrationPattern {

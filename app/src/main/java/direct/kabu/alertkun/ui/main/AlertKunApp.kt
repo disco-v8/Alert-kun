@@ -1,6 +1,7 @@
 package direct.kabu.alertkun.ui.main
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -24,7 +25,7 @@ private object AlertKunRoute {
 }
 
 @Composable
-fun AlertKunApp() {
+fun AlertKunApp(openMailRequest: Int = 0) {
     val navController = rememberNavController()
     val monitoringViewModel: MainMonitoringViewModel = viewModel()
     val monitoring by monitoringViewModel.state.collectAsStateWithLifecycle()
@@ -77,5 +78,8 @@ fun AlertKunApp() {
         composable(AlertKunRoute.Settings) {
             OtherSettingsScreen(onBack = navController::navigateUp)
         }
+    }
+    LaunchedEffect(openMailRequest) {
+        if (openMailRequest > 0) navController.navigate(AlertKunRoute.ReceivedMail) { launchSingleTop = true }
     }
 }

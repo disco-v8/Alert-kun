@@ -43,9 +43,12 @@ fun MainScreen(
     val lastSuccessfulCheck = monitoringState.lastSuccessfulCheckAtEpochMillis
         ?.let(::formatMonitoringTimestamp)
         ?: stringResource(R.string.not_available)
-    val nextScheduledCheck = monitoringState.nextScheduledCheckAtEpochMillis
-        ?.let(::formatMonitoringTimestamp)
-        ?: stringResource(R.string.not_available)
+    val nextCheckAt = monitoringState.nextScheduledCheckAtEpochMillis
+    val nextScheduledCheck = when {
+        !monitoringState.isMonitoring -> stringResource(R.string.next_check_none)
+        nextCheckAt == null -> stringResource(R.string.next_check_pending)
+        else -> stringResource(R.string.next_scheduled_check, formatMonitoringTimestamp(nextCheckAt))
+    }
 
     Scaffold(
         modifier = modifier,
@@ -68,7 +71,7 @@ fun MainScreen(
                 text = stringResource(R.string.last_check, lastSuccessfulCheck),
                 modifier = Modifier.testTag("monitoring_last_check"),
             )
-            Text(stringResource(R.string.next_scheduled_check, nextScheduledCheck))
+            Text(nextScheduledCheck, modifier = Modifier.testTag("monitoring_next_check"))
 
             NavigationButton(label = stringResource(R.string.received_mail), onClick = onOpenMail)
             NavigationButton(label = stringResource(R.string.rule_settings), onClick = onOpenRules)

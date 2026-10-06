@@ -7,6 +7,17 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ConvertersAndMappersTest {
+    @Test fun allSevenAccountPoliciesRoundTripAndUnknownNamesRetainMail() {
+        val converters = Converters()
+        assertEquals(direct.kabu.alertkun.model.ServerDeletePolicy.NEVER, converters.toServerDeletePolicy("UNKNOWN"))
+        val account = direct.kabu.alertkun.model.MailAccount("a", "A", direct.kabu.alertkun.model.MailProtocol.POP3S,
+            "example.invalid", 995, "u", "key", false, null, true)
+        direct.kabu.alertkun.model.ServerDeletePolicy.entries.forEach { policy ->
+            assertEquals(policy, converters.toServerDeletePolicy(converters.fromServerDeletePolicy(policy)))
+            val selected = account.copy(serverDeletePolicy = policy)
+            assertEquals(selected, selected.toEntity().toDomain())
+        }
+    }
     @Test fun enumAndHeadersRoundTripAsStrings() {
         val converters = Converters()
         assertEquals("RECEIVED", converters.fromProcessingState(MailProcessingState.RECEIVED))

@@ -39,6 +39,9 @@ android {
     buildFeatures {
         compose = true
     }
+    // Dedicated TCP mail-server fixtures shared by local and device tests, never shipped.
+    sourceSets.getByName("test").kotlin.directories += "src/testSupport/java"
+    sourceSets.getByName("androidTest").kotlin.directories += "src/testSupport/java"
     packaging {
         resources {
             excludes += setOf(
