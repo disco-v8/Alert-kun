@@ -37,6 +37,8 @@ Debug APKはapp/build/outputs/apk/debug/app-debug.apkに生成されます。端
 
 ## Documentation
 
+FCM Gateway端末登録には`app/google-services.json`をローカルに配置し、実機の設定画面でMyDNS.JP MasterIDを保存します。MasterPwdは既存Keystore方式で将来の認証用に保存し、Gatewayへは送信しません。FCM dataのaction=CHECK_MAILは既存の1回メール確認経路へ渡します。FCMを主監視とし、WorkManagerはmax(設定間隔, 15分)のPeriodicWorkによる保険とします。同じ保険周期内のFCM正常成功があれば保険のメール接続を省きます。MyDNS.JPの実認証は未実装です。操作方法は[user-guide.md](user-guide.md)、内部動作は[architecture.md](architecture.md)を参照してください。
+
 | 文書 | 読む目的 |
 | --- | --- |
 | [user-guide.md](user-guide.md) | 初期設定、日常操作、警報・削除設定、困ったときの確認 |

@@ -11,14 +11,8 @@ import androidx.compose.foundation.layout.imePadding
 import direct.kabu.alertkun.data.repository.AccountSaveFailure
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.Canvas
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.text.input.VisualTransformation
 import direct.kabu.alertkun.monitoring.MonitoringFailureKind
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -36,18 +30,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.key
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.PressInteraction
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.OffsetMapping
-import androidx.compose.ui.text.input.TransformedText
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -145,65 +131,11 @@ private fun saveFailureLabel(kind: AccountSaveFailure?): Int = when (kind) {
 
 @Composable
 internal fun AccountPasswordField(value: String, onValueChange: (String) -> Unit, visible: Boolean, onToggle: () -> Unit, saved: Boolean, enabled: Boolean, credentialLoading: Boolean = false) {
-    val description = stringResource(if (visible) R.string.password_hide else R.string.password_show)
-    val color = MaterialTheme.colorScheme.onSurface
-    var editingSavedPassword by remember(saved, value.isEmpty()) { mutableStateOf(false) }
-    val interactionSource = remember { MutableInteractionSource() }
-    LaunchedEffect(interactionSource, saved, value.isEmpty()) {
-        interactionSource.interactions.collect { interaction ->
-            if (interaction is PressInteraction.Press) editingSavedPassword = true
-        }
-    }
-    val showSavedMask = saved && value.isEmpty() && !editingSavedPassword
-    val savedMask = stringResource(R.string.account_password_saved_mask)
-    val maskTransformation = remember(savedMask) { SavedPasswordMaskTransformation(savedMask) }
-    OutlinedTextField(value, {
-        editingSavedPassword = true
-        onValueChange(it)
-    }, enabled = enabled, interactionSource = interactionSource, label = { Text(stringResource(R.string.account_password)) },
-        supportingText = {
-            Column(Modifier.testTag("account_password_status")) {
-                Text(stringResource(when {
-                    credentialLoading -> R.string.account_password_checking
-                    saved -> R.string.account_password_saved
-                    else -> R.string.account_password_not_saved
-                }))
-                if (saved && !credentialLoading) {
-                    Text(stringResource(R.string.account_password_change_hint), fontWeight = FontWeight.Bold,
-                        modifier = Modifier.testTag("account_password_change_hint"))
-                }
-            }
-        },
-        visualTransformation = when {
-            showSavedMask -> maskTransformation
-            visible -> VisualTransformation.None
-            else -> PasswordVisualTransformation()
-        },
-        trailingIcon = if (value.isEmpty()) null else { {
-            IconButton(onClick = onToggle, enabled = enabled, modifier = Modifier.testTag("account_password_visibility").semantics { contentDescription = description }) {
-                Canvas(Modifier.size(24.dp)) {
-                    drawOval(color, topLeft = androidx.compose.ui.geometry.Offset(0f, size.height * .25f), size = androidx.compose.ui.geometry.Size(size.width, size.height * .5f), style = Stroke(2.dp.toPx()))
-                    drawCircle(color, radius = size.width * .12f)
-                    if (!visible) drawLine(color, androidx.compose.ui.geometry.Offset(0f, 0f), androidx.compose.ui.geometry.Offset(size.width, size.height), strokeWidth = 2.dp.toPx())
-                }
-            }
-        } }, modifier = Modifier.fillMaxWidth().onFocusChanged {
-            if (it.isFocused) editingSavedPassword = true
-            else if (value.isEmpty()) editingSavedPassword = false
-        }.testTag("account_password"))
+    direct.kabu.alertkun.ui.common.SavedPasswordField(value, onValueChange, visible, onToggle, saved, enabled,
+        credentialLoading, R.string.account_password, "account_password", "account")
 }
 
-/** Display-only: the TextField/editor value stays empty, so no mask reaches persistence. */
-internal class SavedPasswordMaskTransformation(private val mask: String) : VisualTransformation {
-    override fun filter(text: AnnotatedString): TransformedText {
-        if (text.isNotEmpty()) return PasswordVisualTransformation().filter(text)
-        return TransformedText(AnnotatedString(mask), object : OffsetMapping {
-            override fun originalToTransformed(offset: Int) = 0
-            override fun transformedToOriginal(offset: Int) = 0
-        })
-    }
-}
-
+internal typealias SavedPasswordMaskTransformation = direct.kabu.alertkun.ui.common.SavedPasswordMaskTransformation
 @Composable
 private fun AccountStatus(status: AccountOperationStatus, running: Int, success: Int, failure: Int, tag: String) {
     if (status == AccountOperationStatus.IDLE) return

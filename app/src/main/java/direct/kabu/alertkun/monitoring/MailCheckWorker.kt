@@ -10,27 +10,39 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-/** One bounded mail check; scheduling is delegated to [MonitoringScheduler]. */
+/** One bounded check or backup skip, always using the same process-wide execution mutex. */
 class MailCheckWorker(appContext: Context, parameters: WorkerParameters) : CoroutineWorker(appContext, parameters) {
     override suspend fun doWork(): Result = executionMutex.withLock {
+        // All settings and success attribution are read after acquiring this shared lock.
         val settings = SettingsRepository(applicationContext).settings.first()
         val status = MonitoringStatusRepository(applicationContext)
         val scheduled = inputData.getBoolean(MonitoringScheduler.KEY_SCHEDULED, false)
         val generation = inputData.getLong(MonitoringScheduler.KEY_GENERATION, -1L)
         val startupRebase = inputData.getBoolean(MonitoringScheduler.KEY_STARTUP_REBASE, false)
-        val expectedGeneration = generation.takeIf { scheduled }
-        var execution = status.executionStatus()
-        if (scheduled && !MonitoringExecutionPolicy.mayReschedule(execution.monitoringEnabled, execution.scheduleGeneration, generation)) {
+        val trigger = MailCheckTrigger.fromInput(inputData.getString(MonitoringScheduler.KEY_TRIGGER), scheduled, startupRebase)
+        val execution = status.executionStatus()
+        monitoringDebugLog(applicationContext, "worker start id=$id trigger=$trigger scheduled=$scheduled generation=$generation startup=$startupRebase attempt=$runAttemptCount")
+        if (!BackupMonitoringPolicy.mayExecute(trigger, settings.monitoringEnabled, execution.monitoringEnabled,
+                execution.scheduleGeneration, generation)) {
+            monitoringDebugLog(applicationContext, "worker skip id=$id trigger=$trigger generation mismatch/monitoring OFF current=${execution.scheduleGeneration}")
             return@withLock Result.success()
         }
         val now = System.currentTimeMillis()
-        if (scheduled && !startupRebase && MonitoringExecutionPolicy.shouldSkipScheduled(now, execution.lastCheckStartedAtEpochMillis, execution.lastCheckCompletedAtEpochMillis, settings.pollIntervalMinutes)) {
-            rescheduleShortIfCurrent(settings.pollIntervalMinutes, generation, execution.lastCheckStartedAtEpochMillis)
+        val backupInterval = BackupMonitoringPolicy.intervalMinutes(settings.pollIntervalMinutes)
+        val expectedGeneration = execution.scheduleGeneration
+        if (trigger == MailCheckTrigger.SCHEDULED_WORK && BackupMonitoringPolicy.shouldSkipBackup(now, generation, backupInterval, execution)) {
+            monitoringDebugLog(applicationContext, "scheduled backup skipped: successful FCM check already completed in current backup window id=$id windowStartMs=${BackupMonitoringPolicy.windowStart(now, execution.nextBackupAtEpochMillis, backupInterval)} successMs=${execution.lastSuccessfulCheckAtEpochMillis}")
+            status.advanceBackupWindow(now, generation, backupInterval)
+            MonitoringStateStore.update(status.current())
+            return@withLock Result.success()
+        }
+        if (trigger == MailCheckTrigger.FCM && BackupMonitoringPolicy.shouldSkipFcmAfterBackup(now, settings.pollIntervalMinutes, execution)) {
+            monitoringDebugLog(applicationContext, "FCM check skipped: recent successful backup already fulfilled this interval id=$id")
             return@withLock Result.success()
         }
         val startedAt = now
-        status.recordCheckStarted(startedAt)
-        val nextAt = if (settings.monitoringEnabled) MonitoringExecutionPolicy.calculateNextTarget(startedAt, settings.pollIntervalMinutes) else null
+        monitoringDebugLog(applicationContext, "mail check start id=$id trigger=$trigger interval=${settings.pollIntervalMinutes} backupInterval=$backupInterval")
+        status.recordCheckStarted(startedAt, expectedGeneration)
         try {
             val result = if (DeviceNetworkChecker.isAvailable(applicationContext)) {
                 MailCheckCoordinatorFactory.create(applicationContext).check()
@@ -38,43 +50,35 @@ class MailCheckWorker(appContext: Context, parameters: WorkerParameters) : Corou
                 MailCheckResult(success = false, failureKind = MonitoringFailureKind.DEVICE_OFFLINE)
             }
             val completedAt = System.currentTimeMillis()
+            monitoringDebugLog(applicationContext, "mail check end id=$id trigger=$trigger success=${result.success} failure=${result.failureKind} checked=${result.checkedCount} received=${result.receivedCount}")
             if (result.success) {
-                MonitoringStateStore.update(status.recordSuccess(completedAt, nextAt, expectedGeneration))
+                MonitoringStateStore.update(status.recordSuccess(completedAt, trigger, expectedGeneration))
             } else {
-                val failure = status.recordFailure(completedAt, nextAt, settings.consecutiveFailureThreshold, expectedGeneration)
+                val failure = status.recordFailure(completedAt, settings.consecutiveFailureThreshold, expectedGeneration)
                 MonitoringStateStore.update(failure.state)
-                if (failure.shouldNotify) MonitoringFailureNotifier(applicationContext).post(result.failureKind ?: MonitoringFailureKind.SERVER_UNAVAILABLE)
+                if (failure.shouldNotify) MonitoringFailureNotifier(applicationContext).post(settings.consecutiveFailureThreshold, completedAt)
             }
         } catch (cancelled: CancellationException) {
+            monitoringDebugLog(applicationContext, "worker cancelled id=$id stopped=$isStopped")
             throw cancelled
-        } catch (_: Throwable) {
-            val failure = status.recordFailure(System.currentTimeMillis(), nextAt, settings.consecutiveFailureThreshold, expectedGeneration)
+        } catch (error: Throwable) {
+            monitoringDebugLog(applicationContext, "worker exception id=$id type=${error.javaClass.simpleName}")
+            val completedAt = System.currentTimeMillis()
+            val failure = status.recordFailure(completedAt, settings.consecutiveFailureThreshold, expectedGeneration)
             MonitoringStateStore.update(failure.state)
-            if (failure.shouldNotify) MonitoringFailureNotifier(applicationContext).post(MonitoringFailureKind.SERVER_UNAVAILABLE)
+            if (failure.shouldNotify) MonitoringFailureNotifier(applicationContext).post(settings.consecutiveFailureThreshold, completedAt)
         } finally {
             if (startupRebase) {
-                MonitoringScheduler.enqueueRebasedScheduleIfCurrent(
-                    applicationContext,
-                    StartupReconcilePolicy.targetAfterCheck(startedAt, settings.pollIntervalMinutes),
-                    generation,
-                    settings.pollIntervalMinutes,
-                )
-            } else {
-                rescheduleShortIfCurrent(settings.pollIntervalMinutes, generation, startedAt, scheduled)
+                MonitoringScheduler.enqueueRebasedScheduleIfCurrent(applicationContext,
+                    StartupReconcilePolicy.targetAfterCheck(startedAt, settings.pollIntervalMinutes), generation, settings.pollIntervalMinutes)
+            } else if (trigger == MailCheckTrigger.SCHEDULED_WORK) {
+                status.advanceBackupWindow(System.currentTimeMillis(), generation, backupInterval)
+                MonitoringStateStore.update(status.current())
             }
         }
+        monitoringDebugLog(applicationContext, "worker end id=$id trigger=$trigger stopped=$isStopped")
         Result.success()
     }
 
-    private suspend fun rescheduleShortIfCurrent(
-        intervalMinutes: Int,
-        generation: Long,
-        startedAt: Long?,
-        scheduled: Boolean = true,
-    ) {
-        if (!scheduled || startedAt == null || intervalMinutes >= MonitoringScheduler.MIN_PERIODIC_MINUTES) return
-        val target = MonitoringExecutionPolicy.calculateNextTarget(startedAt, intervalMinutes)
-        MonitoringScheduler.enqueueShortIfCurrent(applicationContext, target, generation)
-    }
-    private companion object { val executionMutex = Mutex() }
+    internal companion object { val executionMutex = Mutex() }
 }

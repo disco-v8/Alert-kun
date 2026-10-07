@@ -8,9 +8,9 @@ import java.util.Calendar
 import java.util.TimeZone
 
 class MonitoringSchedulerTest {
-    @Test fun intervalClassificationUsesOneTimeBelowWorkManagerMinimum() {
-        assertEquals(MonitoringScheduleKind.ONE_TIME, MonitoringScheduler.kindFor(1))
-        assertEquals(MonitoringScheduleKind.ONE_TIME, MonitoringScheduler.kindFor(14))
+    @Test fun allIntervalsUsePeriodicBackup() {
+        assertEquals(MonitoringScheduleKind.PERIODIC, MonitoringScheduler.kindFor(1))
+        assertEquals(MonitoringScheduleKind.PERIODIC, MonitoringScheduler.kindFor(14))
         assertEquals(MonitoringScheduleKind.PERIODIC, MonitoringScheduler.kindFor(15))
         assertEquals(MonitoringScheduleKind.PERIODIC, MonitoringScheduler.kindFor(1500))
     }
@@ -48,7 +48,7 @@ class MonitoringSchedulerTest {
     @Test fun switchingAcrossThePeriodicBoundaryUsesTheAppropriateInitialTarget() {
         val now = 1_000L
 
-        assertEquals(14 * 60_000L, MonitoringScheduler.initialNextScheduledAt(now, 14)) // 15 -> 14: rounded to 00:14:00
+        assertEquals(15 * 60_000L, MonitoringScheduler.initialNextScheduledAt(now, 14)) // Both use a 15-minute backup
         assertEquals(15 * 60_000L, MonitoringScheduler.initialNextScheduledAt(now, 15)) // 14 -> 15: rounded to 00:15:00
     }
 
@@ -56,21 +56,21 @@ class MonitoringSchedulerTest {
         val oldCheckStartedAt = time(10, 44, 58)
         val changedAt = time(10, 45, 30, 1)
 
-        assertEquals(time(10, 51, 0), MonitoringScheduler.initialNextScheduledAt(changedAt, 5))
+        assertEquals(time(11, 1, 0), MonitoringScheduler.initialNextScheduledAt(changedAt, 5))
         assertFalse(MonitoringScheduler.initialNextScheduledAt(changedAt, 5) == MonitoringExecutionPolicy.calculateNextTarget(oldCheckStartedAt, 5))
     }
 
-    @Test fun intervalChangeRoundsFiveMinutesFromTheChangeTime() {
-        assertEquals(time(10, 50, 0), MonitoringScheduler.initialNextScheduledAt(time(10, 45, 12), 5))
-        assertEquals(time(10, 50, 0), MonitoringScheduler.initialNextScheduledAt(time(10, 45, 30), 5))
-        assertEquals(time(10, 51, 0), MonitoringScheduler.initialNextScheduledAt(time(10, 45, 30, 1), 5))
-        assertEquals(time(10, 51, 0), MonitoringScheduler.initialNextScheduledAt(time(10, 45, 58), 5))
+    @Test fun shortUserIntervalRoundsFifteenMinuteBackupFromChangeTime() {
+        assertEquals(time(11, 0, 0), MonitoringScheduler.initialNextScheduledAt(time(10, 45, 12), 5))
+        assertEquals(time(11, 0, 0), MonitoringScheduler.initialNextScheduledAt(time(10, 45, 30), 5))
+        assertEquals(time(11, 1, 0), MonitoringScheduler.initialNextScheduledAt(time(10, 45, 30, 1), 5))
+        assertEquals(time(11, 1, 0), MonitoringScheduler.initialNextScheduledAt(time(10, 45, 58), 5))
     }
 
     @Test fun allScheduleKindsRebaseFromTheIntervalChangeTime() {
         val changedAt = time(10, 45, 58)
 
-        assertEquals(time(11, 0, 0), MonitoringScheduler.initialNextScheduledAt(changedAt, 14))
+        assertEquals(time(11, 1, 0), MonitoringScheduler.initialNextScheduledAt(changedAt, 14))
         assertEquals(time(11, 1, 0), MonitoringScheduler.initialNextScheduledAt(changedAt, 15))
         assertEquals(time(11, 16, 0), MonitoringScheduler.initialNextScheduledAt(changedAt, 30))
     }

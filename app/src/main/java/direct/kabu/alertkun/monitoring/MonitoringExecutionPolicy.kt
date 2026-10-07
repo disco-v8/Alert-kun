@@ -27,8 +27,6 @@ object MonitoringExecutionPolicy {
     }
 
     fun delayMillis(targetAtEpochMillis: Long, nowEpochMillis: Long): Long = (targetAtEpochMillis - nowEpochMillis).coerceAtLeast(0)
-    fun shouldSkipScheduled(nowEpochMillis: Long, lastStartedAtEpochMillis: Long?, lastCompletedAtEpochMillis: Long?, intervalMinutes: Int): Boolean =
-        lastStartedAtEpochMillis != null && lastCompletedAtEpochMillis != null && nowEpochMillis < calculateNextTarget(lastStartedAtEpochMillis, intervalMinutes)
     fun mayReschedule(monitoringEnabled: Boolean, currentGeneration: Long, workerGeneration: Long): Boolean =
         monitoringEnabled && currentGeneration == workerGeneration
 }

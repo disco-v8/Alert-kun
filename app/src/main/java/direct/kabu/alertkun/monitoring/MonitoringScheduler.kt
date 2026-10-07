@@ -17,35 +17,41 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
+// ONE_TIME is retained only to recognize and migrate persisted legacy schedules.
 enum class MonitoringScheduleKind { ONE_TIME, PERIODIC }
 
 object MonitoringScheduler {
     internal const val PERIODIC_WORK_NAME = "alertkun_mail_check_periodic"
     internal const val SHORT_WORK_NAME = "alertkun_mail_check_short"
     internal const val NOW_WORK_NAME = "alertkun_mail_check_now"
+    internal const val FCM_WORK_NAME = "alertkun_mail_check_fcm"
     internal const val STARTUP_WORK_NAME = "alertkun_mail_check_startup"
     internal const val KEY_SCHEDULED = "scheduled"
     internal const val KEY_GENERATION = "generation"
     internal const val KEY_STARTUP_REBASE = "startup_rebase"
+    internal const val KEY_TRIGGER = "trigger"
     private val scheduleMutationMutex = Mutex()
     private val startupMutex = Mutex()
     private val startupReconcileGate = StartupReconcileGate()
     private val clockBaselineTracker = ClockBaselineTracker()
 
+    fun backupIntervalMinutes(intervalMinutes: Int): Int = BackupMonitoringPolicy.intervalMinutes(intervalMinutes)
     fun kindFor(intervalMinutes: Int): MonitoringScheduleKind {
-        require(intervalMinutes in 1..1500)
-        return if (intervalMinutes >= MIN_PERIODIC_MINUTES) MonitoringScheduleKind.PERIODIC else MonitoringScheduleKind.ONE_TIME
+        backupIntervalMinutes(intervalMinutes)
+        return MonitoringScheduleKind.PERIODIC
     }
 
-    /** A settings change rebases both short and periodic schedules from the change time. */
     internal fun initialNextScheduledAt(nowEpochMillis: Long, intervalMinutes: Int): Long =
-        MonitoringExecutionPolicy.calculateNextTarget(nowEpochMillis, intervalMinutes)
+        MonitoringExecutionPolicy.calculateNextTarget(nowEpochMillis, backupIntervalMinutes(intervalMinutes))
     suspend fun start(context: Context, intervalMinutes: Int) = reschedule(context, intervalMinutes)
 
-    /** Reconciles exactly once per app process; Activity recreation cannot enqueue another startup check. */
     suspend fun reconcileOnAppStart(context: Context, settings: MonitoringSettings) {
         startupMutex.withLock {
-            if (!startupReconcileGate.consumeOnce()) return
+            if (!startupReconcileGate.consumeOnce()) {
+                monitoringDebugLog(context, "startup reconcile skipped gate consumed")
+                return
+            }
+            monitoringDebugLog(context, "startup reconcile action=${StartupReconcilePolicy.actionFor(settings)} interval=${settings.pollIntervalMinutes}")
             clockBaselineTracker.initialize(System.currentTimeMillis(), SystemClock.elapsedRealtime())
             when (StartupReconcilePolicy.actionFor(settings)) {
                 StartupReconcileAction.NONE -> Unit
@@ -55,105 +61,50 @@ object MonitoringScheduler {
         }
     }
 
-    suspend fun handleTimeChanged(
-        context: Context,
-        wallClockMillis: Long = System.currentTimeMillis(),
-        elapsedRealtimeMillis: Long = SystemClock.elapsedRealtime(),
-    ) {
+    suspend fun handleTimeChanged(context: Context, wallClockMillis: Long = System.currentTimeMillis(), elapsedRealtimeMillis: Long = SystemClock.elapsedRealtime()) {
         if (!clockBaselineTracker.recordTimeChanged(wallClockMillis, elapsedRealtimeMillis)) return
         val settings = direct.kabu.alertkun.data.repository.SettingsRepository(context).settings.first()
         if (settings.monitoringEnabled) rebaseWithoutImmediateCheck(context, settings.pollIntervalMinutes, wallClockMillis)
     }
-
     fun handleTimezoneChanged() = MonitoringTimeChangeStore.notifyTimezoneChanged()
-    /** Restores missing work without moving an already scheduled target. */
-    suspend fun sync(context: Context, intervalMinutes: Int) {
-        val status = MonitoringStatusRepository(context)
-        if (!status.executionStatus().monitoringEnabled) {
-            reschedule(context, intervalMinutes)
-            return
-        }
-        val generation = status.executionStatus().scheduleGeneration
-        when (kindFor(intervalMinutes)) {
-            MonitoringScheduleKind.PERIODIC -> WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                PERIODIC_WORK_NAME, ExistingPeriodicWorkPolicy.KEEP,
-                PeriodicWorkRequestBuilder<MailCheckWorker>(intervalMinutes.toLong(), TimeUnit.MINUTES).setInputData(scheduledData(generation)).build(),
-            )
-            MonitoringScheduleKind.ONE_TIME -> WorkManager.getInstance(context).enqueueUniqueWork(
-                SHORT_WORK_NAME, ExistingWorkPolicy.KEEP,
-                OneTimeWorkRequestBuilder<MailCheckWorker>().setInputData(scheduledData(generation)).build(),
-            )
-        }
-        MonitoringStateStore.update(status.current())
-    }
-    suspend fun reschedule(context: Context, intervalMinutes: Int) {
-        scheduleMutationMutex.withLock {
-            val manager = WorkManager.getInstance(context)
-            val status = MonitoringStatusRepository(context)
-            val now = System.currentTimeMillis()
-            val target = initialNextScheduledAt(now, intervalMinutes)
-            val generation = status.changeSchedule(true, target, kindFor(intervalMinutes).name)
-            manager.cancelUniqueWork(PERIODIC_WORK_NAME)
-            manager.cancelUniqueWork(SHORT_WORK_NAME)
-            manager.cancelUniqueWork(STARTUP_WORK_NAME)
-            when (kindFor(intervalMinutes)) {
-                MonitoringScheduleKind.PERIODIC -> enqueuePeriodic(context, target, generation, intervalMinutes)
-                MonitoringScheduleKind.ONE_TIME -> enqueueShort(context, target, generation)
-            }
-            MonitoringStateStore.update(status.current())
-        }
-    }
+
+    /** Preserve a valid backup; migrate legacy short schedules or missing metadata. */
+    suspend fun sync(context: Context, intervalMinutes: Int) = reconcileWithoutStartupCheck(context, intervalMinutes)
+
+    suspend fun reschedule(context: Context, intervalMinutes: Int) =
+        rebaseWithoutImmediateCheck(context, intervalMinutes, System.currentTimeMillis())
+
     suspend fun stop(context: Context) {
         scheduleMutationMutex.withLock {
             val status = MonitoringStatusRepository(context)
             status.changeSchedule(false, null)
             WorkManager.getInstance(context).apply {
-                cancelUniqueWork(PERIODIC_WORK_NAME); cancelUniqueWork(SHORT_WORK_NAME); cancelUniqueWork(NOW_WORK_NAME); cancelUniqueWork(STARTUP_WORK_NAME)
+                cancelUniqueWork(PERIODIC_WORK_NAME)
+                cancelUniqueWork(SHORT_WORK_NAME)
+                cancelUniqueWork(NOW_WORK_NAME)
+                cancelUniqueWork(FCM_WORK_NAME)
+                cancelUniqueWork(STARTUP_WORK_NAME)
             }
             MonitoringStateStore.update(status.current())
         }
     }
-    fun runNow(context: Context) = WorkManager.getInstance(context).enqueueUniqueWork(
-        NOW_WORK_NAME, ExistingWorkPolicy.KEEP,
-        OneTimeWorkRequestBuilder<MailCheckWorker>().setInputData(workDataOf(KEY_SCHEDULED to false)).build(),
-    )
-    internal fun enqueueShort(context: Context, targetAtEpochMillis: Long, generation: Long) = WorkManager.getInstance(context).enqueueUniqueWork(
-        SHORT_WORK_NAME, ExistingWorkPolicy.REPLACE,
-        OneTimeWorkRequestBuilder<MailCheckWorker>()
-            .setInitialDelay(MonitoringExecutionPolicy.delayMillis(targetAtEpochMillis, System.currentTimeMillis()), TimeUnit.MILLISECONDS)
-            .setInputData(scheduledData(generation)).build(),
-    )
-    internal suspend fun enqueueShortIfCurrent(context: Context, targetAtEpochMillis: Long, generation: Long): Boolean = scheduleMutationMutex.withLock {
-        val status = MonitoringStatusRepository(context)
-        val current = status.executionStatus()
-        if (!MonitoringExecutionPolicy.mayReschedule(current.monitoringEnabled, current.scheduleGeneration, generation)) return@withLock false
-        status.setNextScheduled(targetAtEpochMillis)
-        enqueueShort(context, targetAtEpochMillis, generation)
-        true
+
+    fun runNow(context: Context, trigger: MailCheckTrigger = MailCheckTrigger.MANUAL): androidx.work.Operation {
+        require(trigger == MailCheckTrigger.MANUAL || trigger == MailCheckTrigger.FCM)
+        monitoringDebugLog(context, "runNow enqueue trigger=$trigger")
+        // A manual check must never swallow an FCM request and misattribute its result.
+        val name = if (trigger == MailCheckTrigger.FCM) FCM_WORK_NAME else NOW_WORK_NAME
+        return WorkManager.getInstance(context).enqueueUniqueWork(name, ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<MailCheckWorker>().addTag("mail_check_${trigger.name}").setInputData(
+                workDataOf(KEY_SCHEDULED to false, KEY_TRIGGER to trigger.name)).build())
     }
 
-    /** Registers the normal schedule after a startup check has established its new cycle origin. */
-    internal suspend fun enqueueRebasedScheduleIfCurrent(
-        context: Context,
-        targetAtEpochMillis: Long,
-        generation: Long,
-        intervalMinutes: Int,
-    ): Boolean = scheduleMutationMutex.withLock {
+    internal suspend fun enqueueRebasedScheduleIfCurrent(context: Context, targetAtEpochMillis: Long, generation: Long, intervalMinutes: Int): Boolean = scheduleMutationMutex.withLock {
         val status = MonitoringStatusRepository(context)
-        val current = status.executionStatus()
-        if (!MonitoringExecutionPolicy.mayReschedule(current.monitoringEnabled, current.scheduleGeneration, generation)) return@withLock false
-        val manager = WorkManager.getInstance(context)
-        status.setNextScheduled(targetAtEpochMillis)
-        when (kindFor(intervalMinutes)) {
-            MonitoringScheduleKind.PERIODIC -> {
-                manager.cancelUniqueWork(SHORT_WORK_NAME)
-                enqueuePeriodic(context, targetAtEpochMillis, generation, intervalMinutes)
-            }
-            MonitoringScheduleKind.ONE_TIME -> {
-                manager.cancelUniqueWork(PERIODIC_WORK_NAME)
-                enqueueShort(context, targetAtEpochMillis, generation)
-            }
-        }
+        val backup = backupIntervalMinutes(intervalMinutes)
+        if (!status.setBackupScheduleIfCurrent(targetAtEpochMillis, generation, backup)) return@withLock false
+        WorkManager.getInstance(context).cancelUniqueWork(SHORT_WORK_NAME)
+        enqueuePeriodic(context, targetAtEpochMillis, generation, backup)
         MonitoringStateStore.update(status.current())
         true
     }
@@ -162,76 +113,60 @@ object MonitoringScheduler {
         scheduleMutationMutex.withLock {
             val manager = WorkManager.getInstance(context)
             val status = MonitoringStatusRepository(context)
-            val generation = status.changeSchedule(true, null, kindFor(intervalMinutes).name)
+            val generation = status.changeSchedule(true, null, MonitoringScheduleKind.PERIODIC.name, backupIntervalMinutes(intervalMinutes))
             manager.cancelUniqueWork(PERIODIC_WORK_NAME)
             manager.cancelUniqueWork(SHORT_WORK_NAME)
-            manager.enqueueUniqueWork(
-                STARTUP_WORK_NAME,
-                ExistingWorkPolicy.REPLACE,
-                OneTimeWorkRequestBuilder<MailCheckWorker>()
-                    .setInputData(startupData(generation))
-                    .build(),
-            )
+            manager.enqueueUniqueWork(STARTUP_WORK_NAME, ExistingWorkPolicy.REPLACE,
+                OneTimeWorkRequestBuilder<MailCheckWorker>().setInputData(workDataOf(
+                    KEY_SCHEDULED to true, KEY_GENERATION to generation,
+                    KEY_STARTUP_REBASE to true, KEY_TRIGGER to MailCheckTrigger.STARTUP.name)).build())
             MonitoringStateStore.update(status.current())
         }
     }
 
     private suspend fun reconcileWithoutStartupCheck(context: Context, intervalMinutes: Int) {
         val status = MonitoringStatusRepository(context)
-        val state = status.current()
         val execution = status.executionStatus()
-        val kind = kindFor(intervalMinutes)
+        val state = status.current()
         val now = System.currentTimeMillis()
-        if (StartupReconcilePolicy.shouldKeepExistingSchedule(
-                now,
-                state.nextScheduledCheckAtEpochMillis,
-                execution.scheduleKind,
-                kind,
-                normalWorkExists(context, kind),
-            )
-        ) {
+        if (execution.monitoringEnabled && execution.backupIntervalMinutes == backupIntervalMinutes(intervalMinutes) &&
+            StartupReconcilePolicy.shouldKeepExistingSchedule(now, execution.nextBackupAtEpochMillis,
+                execution.scheduleKind, MonitoringScheduleKind.PERIODIC,
+                normalWorkExists(context, execution.scheduleGeneration, backupIntervalMinutes(intervalMinutes)))) {
             MonitoringStateStore.update(state)
             return
         }
         rebaseWithoutImmediateCheck(context, intervalMinutes, now)
     }
 
-    private suspend fun rebaseWithoutImmediateCheck(context: Context, intervalMinutes: Int, now: Long = System.currentTimeMillis()) {
+    private suspend fun rebaseWithoutImmediateCheck(context: Context, intervalMinutes: Int, now: Long) {
         scheduleMutationMutex.withLock {
             val manager = WorkManager.getInstance(context)
             val status = MonitoringStatusRepository(context)
-            val target = StartupReconcilePolicy.targetWithoutImmediateCheck(now, intervalMinutes)
-            val generation = status.changeSchedule(true, target, kindFor(intervalMinutes).name)
+            val backup = backupIntervalMinutes(intervalMinutes)
+            val target = initialNextScheduledAt(now, intervalMinutes)
+            val generation = status.changeSchedule(true, target, MonitoringScheduleKind.PERIODIC.name, backup)
             manager.cancelUniqueWork(PERIODIC_WORK_NAME)
             manager.cancelUniqueWork(SHORT_WORK_NAME)
             manager.cancelUniqueWork(STARTUP_WORK_NAME)
-            when (kindFor(intervalMinutes)) {
-                MonitoringScheduleKind.PERIODIC -> enqueuePeriodic(context, target, generation, intervalMinutes)
-                MonitoringScheduleKind.ONE_TIME -> enqueueShort(context, target, generation)
-            }
+            enqueuePeriodic(context, target, generation, backup)
             MonitoringStateStore.update(status.current())
         }
     }
 
-    private suspend fun normalWorkExists(context: Context, kind: MonitoringScheduleKind): Boolean = withContext(Dispatchers.IO) {
-        val name = if (kind == MonitoringScheduleKind.PERIODIC) PERIODIC_WORK_NAME else SHORT_WORK_NAME
-        WorkManager.getInstance(context).getWorkInfosForUniqueWork(name).get().any { !it.state.isFinished }
+    private suspend fun normalWorkExists(context: Context, generation: Long, interval: Int): Boolean = withContext(Dispatchers.IO) {
+        WorkManager.getInstance(context).getWorkInfosForUniqueWork(PERIODIC_WORK_NAME).get().any {
+            !it.state.isFinished && "backup_generation_$generation" in it.tags && "backup_interval_$interval" in it.tags
+        }
     }
 
-    private fun enqueuePeriodic(context: Context, targetAtEpochMillis: Long, generation: Long, intervalMinutes: Int) = WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-        PERIODIC_WORK_NAME,
-        ExistingPeriodicWorkPolicy.UPDATE,
-        PeriodicWorkRequestBuilder<MailCheckWorker>(intervalMinutes.toLong(), TimeUnit.MINUTES)
-            .setInitialDelay(MonitoringExecutionPolicy.delayMillis(targetAtEpochMillis, System.currentTimeMillis()), TimeUnit.MILLISECONDS)
-            .setInputData(scheduledData(generation))
-            .build(),
-    )
-
-    private fun scheduledData(generation: Long) = workDataOf(KEY_SCHEDULED to true, KEY_GENERATION to generation)
-    private fun startupData(generation: Long) = workDataOf(
-        KEY_SCHEDULED to true,
-        KEY_GENERATION to generation,
-        KEY_STARTUP_REBASE to true,
-    )
-    const val MIN_PERIODIC_MINUTES = 15
+    private fun enqueuePeriodic(context: Context, target: Long, generation: Long, backupInterval: Int) {
+        val request = PeriodicWorkRequestBuilder<MailCheckWorker>(backupInterval.toLong(), TimeUnit.MINUTES)
+            .addTag("backup_generation_$generation").addTag("backup_interval_$backupInterval")
+            .setInitialDelay(MonitoringExecutionPolicy.delayMillis(target, System.currentTimeMillis()), TimeUnit.MILLISECONDS)
+            .setInputData(workDataOf(KEY_SCHEDULED to true, KEY_GENERATION to generation, KEY_TRIGGER to MailCheckTrigger.SCHEDULED_WORK.name))
+            .build()
+        monitoringDebugLog(context, "backup enqueue id=${request.id} targetMs=$target interval=$backupInterval generation=$generation")
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(PERIODIC_WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, request)
+    }
 }

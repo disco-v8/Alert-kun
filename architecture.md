@@ -17,12 +17,25 @@
 | alarm | 通知、MediaPlayer、振動、有限回数制御、継続警報開始・停止 |
 | security | CredentialStore、Android Keystore |
 | receiver | 時計・タイムゾーン変更への対応 |
+| push | Firebase token取得・更新、保存済みMasterIDによるGateway登録、CHECK_MAIL受信のWorkerへの委譲 |
 
 Composeはメール通信・Room・Keystore・ルール判定本体・警報制御本体を直接実装しない。ViewModelは操作と画面状態を調整し、処理本体はRepositoryや専用クラスへ委譲する。AlarmPermissionControlsなどのUIは権限操作のためにControllerの状態を参照する。
 
 監視の主経路:
 
-WorkManager → MailCheckWorker → MailCheckCoordinator → MailReceiver → Room保存 → RuleEngine → poll全体の候補選定 → AlarmController → Room処理確定 → POP3削除判定
+FCM / WorkManager保険 → MailCheckWorker → MailCheckCoordinator → MailReceiver → Room保存 → RuleEngine → poll全体の候補選定 → AlarmController → Room処理確定 → POP3削除判定
+
+### FCM token・Gateway疎通試験
+
+MainActivityのprocess内初回起動でFcmRegistrationCoordinatorがFirebaseMessaging.getInstance().tokenを取得する。専用AlertKunFirebaseMessagingService.onNewTokenも同じ登録経路へ委譲する。FCM dataのactionがCHECK_MAILと完全一致する場合のみ、FcmMailCheckDispatcherから既存MonitoringScheduler.runNowへ渡す。onMessageReceived内では通信せず、既存MailCheckWorkerがscheduled Workerと共通のexecutionMutexで1回チェックを直列実行する。未知action・data欠落は無視し、任意dataはログへ出さない。DEBUGログには受信・判定・enqueueの端末時刻とpriorityを記録する。FCMはMonitoring ONの場合だけ実行し、ON化・interval変更・scheduleGeneration変更・予約キャンセルは行わない。手動runNowはMonitoring OFFでも単発確認可能。WorkManagerは15分以上の保険予約を維持する（詳細は7章）。画面OFF・充電中の疎通試験が対象で、自然Doze時の即時実行保証はない。
+
+Gateway登録はSettingsRepositoryのDataStoreキーmydns_master_idが空でない場合に行い、Debug・Releaseとも保存済みMasterIDを利用する。local.propertiesの試験用MasterID取得とBuildConfig固定値は廃止。FCM tokenをRoom・DataStoreへ追加保存せず、ログはDEBUGだけ先頭6文字・末尾4文字・長さを表示する（短いtokenは全体を隠す）。MasterID・MasterPwd・HTTP本文・例外messageはログに出さない。
+
+FcmTokenRegistrarは標準HttpsURLConnectionでhttps://fcm.gpg.jp:8119/alertkun-api/set-intervalへmasterid / fcmtoken / rcvintervalをPOSTする。標準TLS・ホスト名検証を使用し、redirectは追従しない。接続・読取timeoutは各15秒、応答解析は8192文字まで。HTTP 2xxとJSON status="success"の両方で成功とする。HTTP・network・JSON・応答statusエラーを区別する。
+
+rcvintervalは登録直前にSettingsRepositoryから現在のpollIntervalMinutesを読む（1～1500分）。起動後のMasterIDと間隔の組をdistinctUntilChangedで監視し、初回・MasterID新規保存／変更・間隔変更で現在tokenを取得して再登録する。onNewTokenも登録する。MasterPwdだけの変更・監視ON/OFFだけでは再登録・削除しない。MasterID空欄は正常skip。登録は独立SupervisorJob内で直列化し、失敗を監視へ伝播させない。process終了を跨ぐ登録保証・永続retryはなく、次回アプリ起動・token更新・設定変更が次の機会になる。正式MyDNS認証・Gateway認証・削除APIは未実装。
+
+設定画面のMyDNS.JPセクションでMasterID／MasterPwdを保存する。MyDnsSettingsRepositoryは既存AndroidKeystoreCredentialStoreの専用credential key mydns_master_password_v1を使い、同じAES/GCM鍵・暗号文保存方式を再利用する。MasterPwdは入力中だけUIのメモリに保持し、成功・画面離脱で空にする。保存済み値をUIへ復号表示せず、存在状態のみ返す。空入力は既存秘密情報を保持する。新規入力は保存・復号一致を確認してからMasterIDをDataStoreへ書き、失敗時は旧credentialとMasterIDの補償を試みる。復元失敗は別の失敗として表示する。保存と補償をprocess内Mutex・NonCancellableで保護するが、異なる保存先を跨ぐprocess停止時の原子性は保証しない。バックアップでKeystore鍵の復元は保証されない。MyDNS.JPへの通信・認証テストは行わず、Gateway JSONへMasterPwdを含めない。
 
 ## 2. 永続化
 
@@ -128,45 +141,48 @@ RuleのpresetはDEFAULT、DARK、PURPLE、RED、ORANGE、YELLOW、LIME、LIGHT_B
 
 各メールの処理確定時に、そのメール自身が採用したRuleのbackgroundColorをReceivedMailへsnapshot保存する。poll全体で警報に採用されなかったメールにもその色を保存する。非一致・旧データはDEFAULT。表示時に現在のRuleから色を引き直さないため、Rule変更・削除後も過去メールの色は変わらない。Composeの具体的色・文字色はUI mapperだけで決める。
 
-## 7. WorkManager監視
+## 7. FCM主監視とWorkManager保険
 
-MonitoringSchedulerがunique workを登録し、MailCheckWorkerは1回のmail checkをCoordinatorへ委譲する。監視に常駐FGS、dataSync FGS、AlarmManager、Expedited Work、独自長時間WakeLock、長時間polling loopを使用しない。
+FCM = primary monitoring trigger、WorkManager = backup/reconciliation。Gatewayへ送るrcvintervalはユーザー設定のpollIntervalMinutes（1～1500分）のまま。WorkManagerのbackup intervalはmax(pollIntervalMinutes, 15分)で、全設定値にunique PeriodicWorkを使用する。Gateway側の送信停止・解除APIは今回変更しない。MasterID未設定やFCM未到達では短周期の主監視は働かず、15分以上の保険が残る。
 
-| 確認間隔 | 登録 |
-| --- | --- |
-| 1～14分 | unique OneTimeWorkRequestを正常な世代から自己再登録 |
-| 15～1500分 | unique PeriodicWorkRequest |
-| default | 5分。監視default OFF |
+| ユーザー設定 | FCM登録間隔 | WorkManager保険 |
+| --- | --- | --- |
+| 1～14分 | 設定値 | 15分PeriodicWork |
+| 15～1500分 | 設定値 | 設定値PeriodicWork |
 
-間隔は「確認開始時刻間の目標周期」であり、Androidの実行時刻保証ではない。NetworkType.CONNECTED constraintは付けず、Workerで端末offlineを判別して失敗として記録する。
+onMessageReceivedはCHECK_MAILのみMonitoringScheduler.runNow(context, FCM)へ渡して短時間で返す。手動はMANUAL、通常予約はSCHEDULED_WORK、起動時即時確認はSTARTUPとしてinputDataで識別する。FCMと手動は別unique work名でKEEPし、要求の吸収による成功元の混同を避ける。すべて同じMailCheckWorkerとprocess-local executionMutexを使用し、設定と実行状態はmutex取得後に再読込する。サービス内にメール通信・独自mutexを置かない。
 
-### 実行調停とtarget
+### 成功記録とbackup skip
 
-process-local executionMutexでcheckを直列化する。scheduled WorkerはMutex取得後にDataStoreを再読込し、監視OFF、世代不一致、直前checkから算出したtargetより早い実行を判定する。near-skipでも現行世代のshort scheduleを失わない。
+DataStoreに最後の正常成功時刻、MailCheckTrigger、成功時のscheduleGeneration、最終試行成功flagを同じeditで保存する。試行開始時に成功flagをfalseにして、同じミリ秒でのキャンセル・process終了でも過去の成功を流用しない。正常な新着0件も成功。受信のみ、offline、通信・認証・TLS失敗、例外、キャンセルはFCM成功にしない。後続失敗や未完了checkがあれば古い成功をskipの根拠にしない。旧データにtrigger・backup intervalがない場合や未知値は安全に実行側へ倒す。
 
-runNowはscheduled checkのnear-skipを使わず、監視OFFでも単発確認できる。scheduleGenerationを更新せず、監視ONへ変更しない。
+保険のnext targetを永続化し、そのtargetを基準にbackup interval単位の周期を定める。window startは今回のtarget minus backup interval。Workerが1周期以上遅れた場合はtargetを整数周期だけ進めて現在の区間を求める。遅延中のFCM成功もWorker判定時刻まで含めるが、未来の成功時刻は受け入れない。「now minus 15分」だけのsliding windowは使わない。
 
-targetは実check開始時刻を端末local timezoneの分境界へ丸めてintervalを加える。秒0～30.000は現在分、30.001以降は次分。実測のlastCheckStartedAtEpochMillisは丸めない。interval変更・rebase時はその時点の時刻を基準にする。
+scheduled WorkerはMonitoring ON、世代一致、周期metadata一致、最後の正常成功が同世代のFCM、成功時刻がこの周期内、かつその後に失敗・未完了checkがない場合だけメール接続をskipする。DEBUGへscheduled backup skippedを記録し、次の保険targetだけ進める。skipは成功記録や連続失敗countを変更しない。最後の成功がMANUAL・STARTUP・SCHEDULED_WORK、FCM成功が古い、または不明・不整合なら保険チェックを実行する。
 
-### scheduleGeneration
+FCMが先にmutexを取得して成功した場合、待機中のscheduled Workerは最新成功を読んでskipする。逆順で保険チェックが先に成功した場合、ユーザー設定間隔内の同世代SCHEDULED_WORK正常成功があるFCMは接続を省く。これはFCM成功には記録せず、MANUALには適用しない。失敗・キャンセル済みbackupはFCMを抑制しない。
 
-監視設定保存によるschedule変更、起動時rebase、欠落・期限切れ・種別不整合の修復、大きな時計補正で世代を更新する。scheduled Workerは自身の世代が現在値と一致する場合だけ次workと次回targetを更新する。runNow、正常な既存scheduleを維持する起動時処理、timezone変更、60秒未満の時計補正では更新しない。
+### 予約・世代・起動時調整
 
-### 起動・時計変更
+FCMと手動runNowはON/OFF、interval、scheduleGeneration、保険targetや予約を変更しない。Monitoring OFFではFCM・scheduled・startupは実行しない。明示的な手動runNowは従来どおりOFFでも単発確認できる。
 
-StartupReconcileGateにより同一processで起動時調整を一度だけ行う。監視OFFなら起動時checkなし。checkImmediatelyOnAppStartはdefault ONで、監視ON時に即時checkとschedule rebaseを行う。OFFなら正常なfuture scheduleを維持し、欠落・期限切れ・不整合のみcheckなしでrebaseする。
+設定保存、起動時rebase、欠落・不整合修復、大きな時計補正で世代を更新する。チェック開始・成功・失敗・次targetの書戻しはDataStore edit内で世代を再照合し、古いWorkerは新しい状態へ書き戻さない。保険予約は世代・周期tagも照合し、正常なfuture scheduleを維持する。FCM Gatewayの設定変更時登録は既存経路を維持する。
 
-ACTION_TIME_CHANGEDはwall clockとelapsedRealtimeの差から補正量を判断し、基準があり絶対値60秒以上ならrebaseする。ACTION_TIMEZONE_CHANGEDは表示を再評価し、schedule / generationを変えない。
+従来の1～14分OneTimeWork自己再予約は削除。旧short work名とONE_TIME enum値は既存予約の識別・取消・移行用にだけ残す。更新後の起動時reconcileまたは設定保存で旧short予約を取消し、PeriodicWork保険へ移行する。OneTimeWorkはFCM・手動・startupの単発チェック用途にだけ使う。
 
-独自BOOT_COMPLETED受信・専用の再起動reconcileは未実装。WorkManager自身の永続work管理とアプリ起動時reconcileを、独自boot処理が実装済みという説明へ置き換えない。
+StartupReconcileGateはprocess内1回を維持する。監視ONでcheckImmediatelyOnAppStart=trueなら即時STARTUPチェック後、開始時刻からbackup intervalのtargetを登録する。falseなら正常future backup予約を維持し、期限切れ・欠落・周期不整合のみcheckなしでrebaseする。初回targetは既存の端末local timezone分境界丸めを用い、以後は保険targetを周期単位で進める。FCMの成功はこの基準を動かさない。
+
+ACTION_TIME_CHANGEDはwall clockとelapsedRealtimeの差を使い、基準があり60秒以上の補正ならrebaseする。timezone変更は表示のみ。独自BOOT_COMPLETED reconcileは未実装で、WorkManager自身の永続work管理に依存する。
+
+常駐MonitoringService、dataSync FGS、監視用AlarmManager、Expedited Work、独自長時間WakeLock、長時間polling loopは使用しない。NetworkType.CONNECTED constraintでoffline失敗を隠さない。FCMもPeriodicWorkもAndroidの実行時刻や自然Doze中の即時実行を保証しない。新方式の15～20分実機観測と二重IMAPS接続解消の確認は別途実施する。
 
 ## 8. 失敗管理と表示
 
 MonitoringFailureKindでDEVICE_OFFLINEとSERVER_UNAVAILABLE、DNS、timeout、認証、TLS・証明書、protocolエラー等を区別する。連続失敗閾値は1～99、default 3。端末offlineも失敗countへ含める。新着0通を含む正常なcheckでcountと異常通知状態をresetする。
 
-通常の失敗ではWorkerの即時retry queueを作らず、次の通常pollで再確認する。キャンセルは伝播させる。監視異常通知は端末offlineかサーバー確認失敗かを利用者へ知らせる。認証・TLS等の詳細分類は接続テストUIで表示する。メイン画面に全分類や失敗countを表示する実装はない。
+通常の失敗ではWorkerの即時retry queueを作らず、次の通常pollで再確認する。キャンセルは伝播させる。監視異常通知は設定した連続失敗回数と、その回の失敗日時を改行して表示する。本文日時は端末local timezoneのyyyy/MM/dd HH:mm:ss、BigTextStyleで複数行を表示する。内部の失敗分類は維持する。認証・TLS等の詳細分類は接続テストUIで表示する。メイン画面に全分類や失敗countを表示する実装はない。
 
-メイン画面の「最終確認」は最後の成功時刻。「次回予定」は端末local timezoneでYYYY/MM/DD HH:mm頃と表示する。監視中で未確定なら未定、停止中ならなし。ReceivedMail一覧は件名、差出人、アプリの初回受信日時、snapshot色を表示し、本文詳細・matchedRuleId・alertTriggeredの表示UIはない。
+メイン画面の「最終確認」は最後の成功時刻。「次回バックアップ」はWorkManager保険の内部targetを端末local timezoneでYYYY/MM/DD HH:mm頃と表示する。FCMの次回到達時刻を示すものではない。監視中で未確定なら未定、停止中ならなし。ReceivedMail一覧は件名、差出人、アプリの初回受信日時、snapshot色を表示し、本文詳細・matchedRuleId・alertTriggeredの表示UIはない。
 
 ## 9. 警報・有限回数
 
@@ -258,4 +274,4 @@ Windowsのリポジトリrootから実行:
 
 初期のPhase 0～13は実装順の計画だった。現在はUI・Room・Rule・警報・WorkManager・POP3S・IMAPS・POP3削除まで実装が進んでおり、「Phase 6はDummyのみ」等を現状説明として残さない。自己署名信頼・boot対応・export/import・長期試験を、計画の存在だけで実装済みにしない。
 
-過去の常駐MonitoringService案は廃止し、監視はWorkManagerへ統一した。継続警報専用AlarmPlaybackServiceとは区別する。Room migration履歴は本書2章とschema JSONに保持する。利用者向け操作の詳細はuser-guideへ、作業者向け規約はAGENTSへ集約する。
+過去の常駐MonitoringService案は廃止し、現在はFCMを主監視とし、WorkManagerを保険として使用する。継続警報専用AlarmPlaybackServiceとは区別する。Room migration履歴は本書2章とschema JSONに保持する。利用者向け操作の詳細はuser-guideへ、作業者向け規約はAGENTSへ集約する。

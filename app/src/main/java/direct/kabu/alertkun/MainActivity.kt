@@ -18,11 +18,13 @@ import direct.kabu.alertkun.monitoring.MonitoringScheduler
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import direct.kabu.alertkun.push.FcmRegistrationCoordinator
 
 class MainActivity : AppCompatActivity() {
     private var openMailRequest by mutableIntStateOf(0)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        FcmRegistrationCoordinator.start(applicationContext)
         if (AppCompatDelegate.getApplicationLocales().isEmpty) {
             AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en"))
         }

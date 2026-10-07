@@ -17,10 +17,10 @@ internal object StartupReconcilePolicy {
     }
 
     fun targetAfterCheck(startedAtEpochMillis: Long, intervalMinutes: Int): Long =
-        MonitoringExecutionPolicy.calculateNextTarget(startedAtEpochMillis, intervalMinutes)
+        MonitoringExecutionPolicy.calculateNextTarget(startedAtEpochMillis, BackupMonitoringPolicy.intervalMinutes(intervalMinutes))
 
     fun targetWithoutImmediateCheck(nowEpochMillis: Long, intervalMinutes: Int): Long =
-        MonitoringExecutionPolicy.calculateNextTarget(nowEpochMillis, intervalMinutes)
+        MonitoringExecutionPolicy.calculateNextTarget(nowEpochMillis, BackupMonitoringPolicy.intervalMinutes(intervalMinutes))
 
     fun shouldKeepExistingSchedule(
         nowEpochMillis: Long,

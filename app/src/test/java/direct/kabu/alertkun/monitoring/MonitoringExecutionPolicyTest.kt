@@ -8,6 +8,12 @@ import java.util.Calendar
 import java.util.TimeZone
 
 class MonitoringExecutionPolicyTest {
+    @Test fun staleOrDisabledWorkerCannotPublishBackupState() {
+        assertFalse(MonitoringExecutionPolicy.mayReschedule(true, 14, 13))
+        assertFalse(MonitoringExecutionPolicy.mayReschedule(false, 14, 14))
+        assertTrue(MonitoringExecutionPolicy.mayReschedule(true, 14, 14))
+    }
+
     @Test fun nextDelayUsesCheckStartAndDoesNotAccumulateWorkDuration() {
         val started = 12 * 60_000L
         val target = MonitoringExecutionPolicy.calculateNextTarget(started, 5)
@@ -15,21 +21,8 @@ class MonitoringExecutionPolicyTest {
         assertEquals(4 * 60_000L + 50_000L, MonitoringExecutionPolicy.delayMillis(target, started + 10_000L))
     }
 
-    @Test fun scheduledWorkSkipsAfterRunNowButExplicitRunIsNotSubjectToThisPolicy() {
-        val now = 12 * 60_000L + 5_000L
-        assertTrue(MonitoringExecutionPolicy.shouldSkipScheduled(now, 12 * 60_000L, 12 * 60_000L + 100L, 5))
-        assertFalse(MonitoringExecutionPolicy.shouldSkipScheduled(17 * 60_000L, 12 * 60_000L, 12 * 60_000L + 100L, 5))
-    }
-
     @Test fun delayIsZeroWhenTheStartBasedTargetHasAlreadyPassed() {
         assertEquals(0L, MonitoringExecutionPolicy.delayMillis(100L, 101L))
-    }
-
-    @Test fun runNowAtTwelveOhThreeMovesSkippedShortWorkTargetToTwelveOhEight() {
-        val runNowStartedAt = 12 * 60_000L + 3 * 60_000L
-        val scheduledStartsAt = 12 * 60_000L + 5 * 60_000L
-        assertTrue(MonitoringExecutionPolicy.shouldSkipScheduled(scheduledStartsAt, runNowStartedAt, runNowStartedAt + 100L, 5))
-        assertEquals(12 * 60_000L + 8 * 60_000L, MonitoringExecutionPolicy.calculateNextTarget(runNowStartedAt, 5))
     }
 
     @Test fun offlineIsASeparateFailureKind() {

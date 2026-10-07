@@ -24,9 +24,9 @@ class MainScreenTest {
         val japanese = context.createConfigurationContext(Configuration(context.resources.configuration).apply {
             setLocale(Locale.JAPANESE)
         })
-        assertEquals("次回予定：2026/10/06 12:00頃", japanese.getString(R.string.next_scheduled_check, "2026/10/06 12:00"))
-        assertEquals("次回予定：未定", japanese.getString(R.string.next_check_pending))
-        assertEquals("次回予定：なし", japanese.getString(R.string.next_check_none))
+        assertEquals("次回バックアップ：2026/10/06 12:00頃", japanese.getString(R.string.next_scheduled_check, "2026/10/06 12:00"))
+        assertEquals("次回バックアップ：未定", japanese.getString(R.string.next_check_pending))
+        assertEquals("次回バックアップ：なし", japanese.getString(R.string.next_check_none))
     }
 
     @Test fun activeMonitoringShowsTheConfiguredInterval() {

@@ -98,6 +98,9 @@ fun OtherSettingsScreen(
             Text(stringResource(R.string.languages))
             LanguageChoice(AppLanguage.ENGLISH, language, languageViewModel::select)
             LanguageChoice(AppLanguage.JAPANESE, language, languageViewModel::select)
+            HorizontalDivider()
+            MyDnsSettingsSection()
+            HorizontalDivider()
             Text(stringResource(R.string.monitoring_settings))
             val pollValid = pollInterval.toIntOrNull() in 1..1500
             val thresholdValid = failureThreshold.toIntOrNull() in 1..99
