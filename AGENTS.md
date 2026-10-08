@@ -44,17 +44,18 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 ## 監視
 
 - Mainの「次回確認」は現在の主監視設定に有効なFCM受信時刻（未受信ならGateway登録／設定成功時刻）＋確認間隔から導出し、「yyyy/MM/dd HH:mm頃」で表示する。OFFは「なし」、有効な基準なしは「未定」。最終確認・WorkManager保険予約を流用せず、予定超過で自動繰り上げ・待機／遅延／異常表示をしない。異常検出は既存の保険・失敗通知が担当する。
+- Mainの「最終確認」は実メールチェック全体が正常完了した最新時刻とする。FCM受信・Worker起動・backup skip・削除失敗では更新しない。監視OFF時の明示的な手動確認成功も対象とする。
 - 主監視設定のrevisionはON/OFF・間隔・MasterID変更と同じDataStore editで更新する。保険用scheduleGenerationは起動／時計補正でも変わるため主監視のsession識別に流用しない。古いrevisionのFCM基準・Gateway成功応答を現在予定へ混入させず、予定時刻自体を永続化しない。token再登録がGatewayの送信基準を変えるかはサーバー仕様で確認し、推測で変更しない。
 - 現在のGatewayは同じtoken・intervalでの間隔登録も成功時に送信基準時刻をリセットする。token再登録も成功確認時刻を新しい初期基準にし、それ以前のFCM基準を解除する。成功後の受信は保持し、失敗時は既存正常基準を上書きしない。将来API変更時はこの前提を再確認する。
 
-- default network changeはINTERNET / VALIDATEDを補助情報として短時間だけ復旧待ちする。実接続結果を最終判定とし、変更を観測した一過性の通信例外だけ有限retryを許す。auth / TLS / protocolエラーを隠さない。Coordinator・警報・削除全体を再実行せず、メール保存・警報の重複を防ぎ、callbackを終了・キャンセル時に解除する。
+- default network changeはINTERNET / VALIDATEDを補助情報として、1チェック全体で合計最大8秒の安定化待ちを行う。default networkが存在すれば実メール接続結果を最終判定とし、変更を観測した読み取り通信の一過性例外だけ最大1回retryする。auth / TLS / certificate / protocolエラーはretryしない。復旧して正常完了した途中のエラーをfailure countへ加算しない。Coordinator・警報・削除全体を再実行せず、メール保存・警報の重複を防ぎ、callbackを終了・キャンセル時に解除する。
 
 - FCMを主監視、WorkManagerを保険・整合確認として使用する。常駐MonitoringService、dataSync FGS、監視用AlarmManager、長時間polling loop、独自長時間WakeLockを導入しない。
 - 1 Workerは1回のboundedなcheckをCoordinatorへ委譲する。FCM登録間隔は設定値、保険はmax(設定値, 15分)のunique PeriodicWork。OneTimeWorkはFCM・手動・起動時の単発確認用途だけとする。正確な時刻を保証しない。
 - executionMutex、Mutex取得後の設定再読込、scheduleGeneration照合を壊さない。保険skipは同世代・同一保険周期内のFCM正常成功だけを根拠とし、不明・失敗・他triggerでは実行する。FCMと手動の成功元を混同せず、FCM成功で保険周期を動かさない。
 - runNowは監視ON化・世代変更を行わない。FCMは監視OFFで実行せず、明示的な手動runNowのOFF時単発確認は維持する。起動時gate、正常future schedule維持、60秒以上の時計補正rebase、timezoneで表示だけ変更する方針を維持する。
 - NetworkType.CONNECTED constraintでoffline確認を隠さない。offlineも連続失敗へ含め、新着0件の成功で失敗count・異常通知状態をresetする。
-- 日次監視ヘルス通知は正常check完了時に既存executionMutex内で判定する。初回実績・前回通知から24時間を確保し、失敗履歴を成功で消さない。skipを成功や失敗へ流用せず、異常検出件数はRoomのPROCESSED / alertTriggered snapshotから数える。専用の静かなLOW channelを使い、通知設定で監視予約・Gateway登録・警報を変更しない。
+- 日次監視ヘルス通知は初期値ONとし、正常check完了時にexecutionMutex内で判定する。初回正常checkから24時間待ち、以後は前回通知から24時間以上経過した最初の正常checkで通知する。監視または通知設定OFFで観測を解除し、再ON後も初回正常checkから24時間待つ。過去24時間に失敗があれば正常通知を出さず、連続失敗通知へ委ねる。失敗履歴を成功で消さず、skipを成功や失敗へ流用しない。異常検出件数はRoomのPROCESSEDかつalertTriggered=trueを初回保存時刻による過去24時間で数える。専用LOW channelは無音・無振動、固定notification ID 6003とし、通知設定で監視予約・Gateway登録・警報を変更しない。
 
 ## 警報・preview
 
@@ -63,14 +64,14 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 - 継続開始はexact alarm → AlarmStartReceiver → mediaPlayback AlarmPlaybackService。監視へ流用しない。権限・通知・FGS開始失敗時の単発fallbackと、Audio Focus拒否時の音の開始抑止を維持する。
 - 新警報は既存警報を置換しqueueを作らない。Stopはpending開始、timer、残回数、player、振動、通知、Serviceを解除する。
 - soundTypeに対応する音源一覧・標準URIを維持し、種別変更時に旧soundUriを流用しない。有限回数・previewは種別ごとのusageを維持する。UNTIL_STOPPEDだけ選択音源を保持してUSAGE_ALARM / STREAM_ALARMを使い、Android 17の背景音声制約へ適合させる。端末の音量・DNDは変更しない。
-- 継続警報のlive sessionはService activate/破棄に連動させ、Main画面と通知は共通Stopへ到達する。スワイプ消去はStopとせず通知だけを復元し、出力を再開始しない。同じメール・Ruleの再handoffは無視する。MediaPlayerのWakeLockは継続警報再生中だけで、監視へ流用しない。
+- 継続警報のlive sessionはService activate/破棄に連動させ、Main上部の停止ボタンはactive時だけ表示する。Main・通知・確認ツールは共通AlarmController.stop()へ到達する。画面OFFでもsession・音・振動を継続し、画面OFF後の振動再設定はtoken照合でStop後・置換後に出力を復活させない。スワイプ消去はStopとせず通知だけを復元し、出力を再開始しない。pending/active中の同じメール・Ruleの再handoffは無視する。MediaPlayerのWakeLockは継続警報再生中だけで、監視へ流用しない。
 - 警報channelは音・振動なし、実出力はController。端末音量変更・DND回避をしない。
 - previewは共通waveformを1サイクルだけ使用し、初期表示で実行しない。選択変更で旧previewをcancel、NONE・画面離脱で停止する。
 - previewはAlarmEvent・通知・FGS・Room・alertTriggeredを変更しない。所有tokenを維持し、cleanupで後から開始した本番警報を止めない。
 
 ## サーバー削除
 
-- Account単位ServerDeletePolicyの既存・未知値はNEVER。POP3 / POP3Sのみ対応し、IMAPへ曖昧に広げない。
+- Account単位ServerDeletePolicyの新規・migration・未知値はNEVERとし、明示保存済みpolicyは保持する。POP3 / POP3Sのみ対応し、IMAPへ曖昧に広げない。
 - ローカル保存、Rule評価、必要なpoll handoff、PROCESSED確定前に削除しない。
 - accountId + UIDLをRoomと照合し、PROCESSEDと有効な初回保存時刻・期限経過を証明できる場合だけ削除する。alertTriggeredを条件にしない。
 - lookup失敗、ID不一致、RECEIVED、不明・未来時刻、protocol状態不明、例外では残す。
@@ -84,8 +85,11 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 - パスワード・token・秘密鍵・本文全文をログへ出さない。Room / DataStore / 設定JSONへパスワードを平文保存しない。
 - 保存済みパスワードをUIの実値へ戻さず、固定マスクを保存しない。空入力による既存秘密情報の維持を壊さない。
 - CredentialStoreとAccount保存の検証・補償処理を維持し、復旧失敗を成功として隠さない。
-- TLS検証を全体で一律無効にしない。trust-all、全証明書受入れ、HostnameVerifier無条件trueは禁止。STRICTはCA・期限・ホスト名を検証し、ホスト名不一致の許可はアカウントの明示設定時だけとする。受信・POP3削除・接続テストは同じTLS検証ポリシーを使用する。
-- 自己署名はユーザーが明示承認したleaf証明書のSHA-256 fingerprint pinningで扱う。初回・変更時に自動承認/自動更新しない。証明書確認だけの接続では認証情報を送らずhandshakeを拒否する。接続先変更時は承認を解除する。trustedCertificateIdは旧予約フィールドであり信頼判定へ流用しない。
+- TLSモードはSTRICT、CA_VALIDATED_NO_HOSTNAME（CA_ONLY相当）、SELF_SIGNED_ALLOWED、INSECURE。STRICTはチェーン・信頼済みCA・期限・ホスト名を検証する。CA_ONLY相当はホスト名一致だけを要求せずCA・チェーン・期限検証を維持する。SELF_SIGNED_ALLOWEDはCA trust不要で自己署名を許可するが、leafの有効期限とホスト名一致を検証する。INSECUREはTLS暗号化のみでサーバー証明書を検証しない。
+- trust-allはアカウントでINSECUREを明示選択した場合だけに限定し、Angus MailSSLSocketFactoryをその接続の設定へ渡す。初期値・旧schema migration・未知値はSTRICTで、自動的にINSECUREへ移行しない。全体のSSLContext・HostnameVerifierを変更しない。POP3S受信・削除・IMAPS・接続テストは同じTLSモードを参照する。未対応のSTARTTLSを暗黙に追加しない。
+- 明示保存済みモードは保持する。互換用TEXT値PINNED_CERTIFICATEはSELF_SIGNED_ALLOWEDへ解釈し、通常保存時に正規化する。certificateFingerprint列は互換性のため未使用列として残し、TLS判断・domain・UIへ渡さない。trustedCertificateIdは互換用フィールドとして保持し、信頼判定へ流用しない。
+- TLS設定UIはラベルと4選択肢のみ。常設説明・補足・赤字注意・警告・選択時ダイアログ・fingerprint表示・承認UIを追加しない。
+- fingerprintを計算・承認・保存・比較しない。INSECUREへの自動fallbackを行わず、受信・POP3削除・接続テストは共通MailConnectionSettingsを維持する。
 - backupは認証情報復元を保証しない。変更時はKeystore鍵と暗号文の関係を検証する。
 - 公開用変更へ実Account情報・credential・秘密鍵・keystoreを追加しない。発見時は値を再掲せず場所を報告し、無断で履歴rewriteしない。
 
@@ -100,5 +104,6 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 - 通信・削除の試験は削除専用Account・使い捨てメールで行い、本番メールを使用しない。
 - 利用者に見えるUI変更ではuser-guide.mdを確認・更新する。内部仕様変更ではarchitecture.md、厳守事項変更ではAGENTS.mdも更新する。
 - READMEは概要・入口、user-guideは利用方法、architectureは内部仕様、AGENTSは作業規約。詳細を大量複製しない。
+- 4文書は現在仕様を記載し、開発経緯・過去方式との比較は残さない。migration・互換性・安全上の不変条件に必要な説明は保持する。
 - build/、.gradle/、local.properties等をCommitしない。既存.gitignoreを尊重する。
 - 最終報告には変更・ファイル・検証結果・未実行・未解決事項を含める。PRでは利用者への影響と関連する安全性・永続化・権限変更を明記する。

@@ -1,6 +1,6 @@
 # AlertKun 内部設計
 
-この文書は2026-10-06時点の作業ツリーの実装を基準とする内部設計・動作仕様の正本である。操作方法は[user-guide.md](user-guide.md)、開発時の厳守事項は[AGENTS.md](AGENTS.md)、概要とビルドの入口は[README.md](README.md)を参照する。将来案と現在の実装を区別し、変更時はコード・テストと一緒に更新する。
+この文書はAlertKunの現在の内部設計・動作仕様を記載する。操作方法は[user-guide.md](user-guide.md)、開発時の厳守事項は[AGENTS.md](AGENTS.md)、概要とビルドの入口は[README.md](README.md)を参照する。仕様変更時はコード・テストと一緒に更新する。
 
 ## 1. 実装範囲と構成
 
@@ -25,11 +25,11 @@ Composeはメール通信・Room・Keystore・ルール判定本体・警報制�
 
 FCM / WorkManager保険 → MailCheckWorker → MailCheckCoordinator → MailReceiver → Room保存 → RuleEngine → poll全体の候補選定 → AlarmController → Room処理確定 → POP3削除判定
 
-### FCM token・Gateway疎通試験
+### FCM token・Gateway登録
 
-MainActivityのprocess内初回起動でFcmRegistrationCoordinatorがFirebaseMessaging.getInstance().tokenを取得する。専用AlertKunFirebaseMessagingService.onNewTokenも同じ登録経路へ委譲する。FCM dataのactionがCHECK_MAILと完全一致する場合のみ、FcmMailCheckDispatcherから既存MonitoringScheduler.runNowへ渡す。onMessageReceived内では通信せず、既存MailCheckWorkerがscheduled Workerと共通のexecutionMutexで1回チェックを直列実行する。未知action・data欠落は無視し、任意dataはログへ出さない。DEBUGログには受信・判定・enqueueの端末時刻とpriorityを記録する。FCMはMonitoring ONの場合だけ実行し、ON化・interval変更・scheduleGeneration変更・予約キャンセルは行わない。手動runNowはMonitoring OFFでも単発確認可能。WorkManagerは15分以上の保険予約を維持する（詳細は7章）。画面OFF・充電中の疎通試験が対象で、自然Doze時の即時実行保証はない。
+MainActivityのprocess内初回起動でFcmRegistrationCoordinatorがFirebaseMessaging.getInstance().tokenを取得する。専用AlertKunFirebaseMessagingService.onNewTokenも同じ登録経路へ委譲する。FCM dataのactionがCHECK_MAILと完全一致する場合のみ、FcmMailCheckDispatcherから既存MonitoringScheduler.runNowへ渡す。onMessageReceived内では通信せず、既存MailCheckWorkerがscheduled Workerと共通のexecutionMutexで1回チェックを直列実行する。未知action・data欠落は無視し、任意dataはログへ出さない。DEBUGログには受信・判定・enqueueの端末時刻とpriorityを記録する。FCMはMonitoring ONの場合だけ実行し、ON化・interval変更・scheduleGeneration変更・予約キャンセルは行わない。手動runNowはMonitoring OFFでも単発確認可能。WorkManagerは15分以上の保険予約を維持する（詳細は7章）。自然Doze時の即時実行保証はない。
 
-Gateway登録はSettingsRepositoryのDataStoreキーmydns_master_idが空でない場合に行い、Debug・Releaseとも保存済みMasterIDを利用する。local.propertiesの試験用MasterID取得とBuildConfig固定値は廃止。FCM tokenをRoom・DataStoreへ追加保存せず、ログはDEBUGだけ先頭6文字・末尾4文字・長さを表示する（短いtokenは全体を隠す）。MasterID・MasterPwd・HTTP本文・例外messageはログに出さない。
+Gateway登録はSettingsRepositoryのDataStoreキーmydns_master_idが空でない場合に行い、Debug・Releaseとも保存済みMasterIDを利用する。FCM tokenをRoom・DataStoreへ保存せず、ログはDEBUGだけ先頭6文字・末尾4文字・長さを表示する（短いtokenは全体を隠す）。MasterID・MasterPwd・HTTP本文・例外messageはログに出さない。
 
 FcmTokenRegistrarは標準HttpsURLConnectionでhttps://fcm.gpg.jp:8119/alertkun-api/set-intervalへmasterid / fcmtoken / rcvintervalをPOSTする。標準TLS・ホスト名検証を使用し、redirectは追従しない。接続・読取timeoutは各15秒、応答解析は8192文字まで。HTTP 2xxとJSON status="success"の両方で成功とする。HTTP・network・JSON・応答statusエラーを区別する。
 
@@ -50,7 +50,7 @@ AlertKunDatabaseの現在のschemaはv5。accounts / rules / received_mailsを�
 | 3 → 4 | accountsのserverDeletePolicy | NEVER。旧deleteAfterReceiveの値から削除を有効にしない |
 | 4 → 5 | accountsのtlsValidationMode / certificateFingerprint | STRICT / NULL。旧予約値から信頼を登録しない |
 
-1→5のmigrationを登録し、破壊的fallbackは使用しない。schema JSONはapp/schemas以下に置く。AlarmModeのTHREE_TIMES / FIVE_TIMES追加は既存TEXT列を利用し、schema変更を伴わない。旧ONCE / UNTIL_STOPPEDはそのまま読み込む。
+1→5のmigrationを登録し、破壊的fallbackは使用しない。schema JSONはapp/schemas以下に置く。AlarmModeはTEXT列にONCE / THREE_TIMES / FIVE_TIMES / UNTIL_STOPPEDを保存する。
 
 ReceivedMailの重要な情報はid、accountId、remoteMessageId、receivedAtEpochMillis、From、ヘッダー、Subject、必要な本文、bodyFetched、processingState、alertTriggered、matchedRuleId、backgroundColor。UNIQUE(accountId, remoteMessageId)で重複保存を防ぐ。UIDL / UIDだけを先に保存せず、再処理に必要なデータとRECEIVEDを同じ行の挿入で確定する。
 
@@ -72,11 +72,26 @@ ManifestはallowBackup=true。現在のbackup / data extraction規則はpending_
 
 ## 3. メール通信と識別
 
-JakartaMailReceiverはAngus Mailで受信する。POP3S / IMAPSはimplicit TLSで、アカウントのTlsValidationModeを使用する。既存・新規アカウントはSTRICTが標準。POP3 / IMAP4は非TLSで、STARTTLSは有効にしない。接続・読取・書込タイムアウトは各30秒であり、Coordinator全体の制限時間ではない。
+JakartaMailReceiverはAngus Mailで受信する。POP3S / IMAPSはimplicit TLSで、アカウントのTlsValidationModeを使用する。新規アカウントはSTRICTが標準で、明示保存済みモードは保持する。POP3 / IMAP4は非TLSで、STARTTLSは有効にしない。接続・読取・書込タイムアウトは各30秒であり、Coordinator全体の制限時間ではない。
 
 受信対象はINBOX。READ_ONLYで開き、IMAPの既読変更やexpungeを行わない。接続テストは接続・認証と最小限の確認だけを行い、削除経路を呼ばない。
 
-MailConnectionSettingsで受信用SessionとPOP3削除専用socketのprotocol・timeout・TLS設定を共通化する。削除socketも受信と同じAngus SocketFetcherを使用する。STRICTは標準TrustManagerFactoryのCA検証にleafの有効期間確認を加え、POP3S/IMAPSともssl.checkserveridentity=trueとAngus標準MailHostnameVerifierを明示する。AndroidのLDAPS endpoint検証の有無に依存せずホスト名を検証する。CA_VALIDATED_NO_HOSTNAMEは明示設定時だけ名前一致を要求しないが、同じCA検証・有効期間・TLS暗号化を維持する。TLS検証を全体で一律無効にせず、trust-allや常にtrueのHostnameVerifierを使わない。
+MailConnectionSettingsで受信用Session・接続テストとPOP3削除専用socketのprotocol・timeout・TLS設定を共通化する。削除socketも受信と同じAngus SocketFetcherを使用する。TLS検証はアカウントの4モードで選択する。
+
+| 保存モード | UI | 検証内容 |
+| --- | --- | --- |
+| STRICT | 厳密に検証する（推奨） | 標準TrustManagerFactoryのチェーン・信頼済みCA・通常のTLS検証＋leafの有効期限＋SAN/CNと接続先ホスト名 |
+| CA_VALIDATED_NO_HOSTNAME（CA_ONLY相当） | ホスト名の不一致を許可する | STRICTと同じCA・チェーン・有効期限検証。ホスト名一致だけを要求しない |
+| SELF_SIGNED_ALLOWED | 自己署名証明書を許可する | CA trust不要。自己署名を許可し、有効期限＋ホスト名を検証。fingerprint不要 |
+| INSECURE | 検証しない | TLS暗号化のみ。証明書真正性・期限・ホスト名の検証なし |
+
+STRICTとSELF_SIGNED_ALLOWEDはPOP3S/IMAPSともssl.checkserveridentity=trueとAngus標準MailHostnameVerifierで名前を検証する。CA_ONLY相当とINSECUREだけcheckserveridentity=false。STRICTとCA_ONLY相当はValidatedCaTrustManagerでleafの期限と標準CA検証を行う。SELF_SIGNED_ALLOWEDはExpiryValidatedTrustManagerで非空のleafとcheckValidity()を要求し、信頼ストアによるchain検証を行わない。INSECUREだけAngus標準MailSSLSocketFactory("TLS").setTrustAllHosts(true)を接続単位で使用する。ssl.enable=trueを維持し、socketFactory.fallback=falseで自動fallbackを防ぐ。全体のSSLContext・HostnameVerifier・CA信頼設定は変更しない。
+
+TLSモードはRoom v5のTEXT列に保存する。初期値・4→5 migration・未知の保存値はSTRICTで、INSECUREへの自動移行・自動fallbackは行わない。失敗はCA・ホスト名不一致・期限・その他handshakeエラーに分類する。
+
+互換性のため、TEXT保存値PINNED_CERTIFICATEはconverterでSELF_SIGNED_ALLOWEDとして読み、通常アカウント保存時に正規化する。certificateFingerprint列は互換性のため未使用列として残る。domain・UI・TLS判断には使用せず、通常保存ではNULLとする。trustedCertificateIdも互換性のため未使用列として残る。
+
+設定画面のTLS欄はラベルと選択中のモード、4選択肢だけを表示する。常設説明・補足・警告・選択時ダイアログ・証明書承認UIは表示しない。
 
 - POP3の永続IDはUIDL。セッション内のメッセージ番号を保存しない。
 - IMAPの永続IDはUIDVALIDITYとUIDを組み合わせた文字列。UIDVALIDITY変更後の別メールを混同しない。
@@ -86,8 +101,6 @@ MailConnectionSettingsで受信用SessionとPOP3削除専用socketのprotocol・
 本文が必要と判断された場合、対象リモートIDの本文を別途取得する。plain textを優先し、HTMLしかない場合はタグ等を除去する。添付はローカル保存・表示・ルール判定の対象にしない。ただしMIME content取得時の通信量について、添付の転送自体を完全に抑止する保証はない。
 
 有効Accountがある場合はAccountMailReceiverがそれらを処理する。複数Accountの候補は1回のCoordinator全体で比較する。有効Accountが0件ならDummyMailReceiverへ切り替わる。これは開発確認用であり、実サーバーへの接続成功を意味しない。Dummyのキューと失敗再現はprocess-local。通常Account UIには、既存Accountを残したまま新規Accountを追加する専用操作が現在ない。
-
-PINNED_CERTIFICATEは明示承認済みleafのDER証明書全体のSHA-256を照合し、CA・名前一致の代わりに固定証明書の一致と有効期間を要求する。初回の接続テストは証明書を取得してhandshakeを拒否し、認証/受信/削除を行わない。fingerprintを表示し「この証明書を信頼する」でeditorへ採用した後、通常の接続テスト成功と保存を必要とする。変更時はCERTIFICATE_CHANGEDとして拒否し、設定画面の再確認・再承認まで自動更新しない。接続テストへ変更エラーを表示し、既存の連続失敗閾値で通知する際も証明書変更の案内を付記する。ホスト・ポート・protocolの編集で承認を解除する。Room v5 migrationはtlsValidationModeをSTRICT、certificateFingerprintをNULLにする。旧trustedCertificateIdは予約情報のまま信頼判定に使用しない。
 
 ## 4. RECEIVED / PROCESSEDと復旧
 
@@ -146,7 +159,7 @@ RuleのpresetはDEFAULT、DARK、PURPLE、RED、ORANGE、YELLOW、LIME、LIGHT_B
 
 ## 7. FCM主監視とWorkManager保険
 
-FCM = primary monitoring trigger、WorkManager = backup/reconciliation。Gatewayへ送るrcvintervalはユーザー設定のpollIntervalMinutes（1～1500分）のまま。WorkManagerのbackup intervalはmax(pollIntervalMinutes, 15分)で、全設定値にunique PeriodicWorkを使用する。Gateway側の送信停止・解除APIは今回変更しない。MasterID未設定やFCM未到達では短周期の主監視は働かず、15分以上の保険が残る。
+FCM = primary monitoring trigger、WorkManager = backup/reconciliation。Gatewayへ送るrcvintervalはユーザー設定のpollIntervalMinutes（1～1500分）。WorkManagerのbackup intervalはmax(pollIntervalMinutes, 15分)で、全設定値にunique PeriodicWorkを使用する。MasterID未設定やFCM未到達では短周期の主監視は働かず、15分以上の保険が残る。
 
 | ユーザー設定 | FCM登録間隔 | WorkManager保険 |
 | --- | --- | --- |
@@ -167,17 +180,17 @@ FCMが先にmutexを取得して成功した場合、待機中のscheduled Worke
 
 ### 予約・世代・起動時調整
 
-FCMと手動runNowはON/OFF、interval、scheduleGeneration、保険targetや予約を変更しない。Monitoring OFFではFCM・scheduled・startupは実行しない。明示的な手動runNowは従来どおりOFFでも単発確認できる。
+FCMと手動runNowはON/OFF、interval、scheduleGeneration、保険targetや予約を変更しない。Monitoring OFFではFCM・scheduled・startupは実行しない。明示的な手動runNowはOFFでも単発確認できる。
 
 設定保存、起動時rebase、欠落・不整合修復、大きな時計補正で世代を更新する。チェック開始・成功・失敗・次targetの書戻しはDataStore edit内で世代を再照合し、古いWorkerは新しい状態へ書き戻さない。保険予約は世代・周期tagも照合し、正常なfuture scheduleを維持する。FCM Gatewayの設定変更時登録は既存経路を維持する。
 
-従来の1～14分OneTimeWork自己再予約は削除。旧short work名とONE_TIME enum値は既存予約の識別・取消・移行用にだけ残す。更新後の起動時reconcileまたは設定保存で旧short予約を取消し、PeriodicWork保険へ移行する。OneTimeWorkはFCM・手動・startupの単発チェック用途にだけ使う。
+OneTimeWorkはFCM・手動・startupの単発チェック用途にだけ使う。互換用のshort work名とONE_TIME enum値は既存予約の識別・取消にだけ使用し、起動時reconcileまたは設定保存で該当予約を取消してPeriodicWork保険を登録する。
 
 StartupReconcileGateはprocess内1回を維持する。監視ONでcheckImmediatelyOnAppStart=trueなら即時STARTUPチェック後、開始時刻からbackup intervalのtargetを登録する。falseなら正常future backup予約を維持し、期限切れ・欠落・周期不整合のみcheckなしでrebaseする。初回targetは既存の端末local timezone分境界丸めを用い、以後は保険targetを周期単位で進める。FCMの成功はこの基準を動かさない。
 
 ACTION_TIME_CHANGEDはwall clockとelapsedRealtimeの差を使い、基準があり60秒以上の補正ならrebaseする。timezone変更は表示のみ。独自BOOT_COMPLETED reconcileは未実装で、WorkManager自身の永続work管理に依存する。
 
-常駐MonitoringService、dataSync FGS、監視用AlarmManager、Expedited Work、独自長時間WakeLock、長時間polling loopは使用しない。NetworkType.CONNECTED constraintでoffline失敗を隠さない。FCMもPeriodicWorkもAndroidの実行時刻や自然Doze中の即時実行を保証しない。2026-10-08のPixel 7a・画面OFF/充電中の20分観測ではFCM正常確認、15分保険の自然実行とskip、旧short予約取消、二重受信抑止を確認した。自然Dozeでの長時間確認は別途実施する。
+常駐MonitoringService、dataSync FGS、監視用AlarmManager、Expedited Work、独自長時間WakeLock、長時間polling loopは使用しない。NetworkType.CONNECTED constraintでoffline失敗を隠さない。FCMもPeriodicWorkもAndroidの実行時刻や自然Doze中の即時実行を保証しない。
 
 ### デフォルトネットワーク切替への猶予
 
@@ -189,7 +202,7 @@ NetworkStabilizationは1チェック全体で合計最大8秒だけcallbackに�
 
 FCM・保険・手動・起動時は同じMailReceiver wrapperを利用する。Workerは最終結果だけを成功時刻・failure count・health履歴へ反映し、復旧した途中のエラーは通知しない。OFF・generation・backup skip判定は登録前のまま維持する。長時間待機・無限retry・監視FGS・WakeLockは追加しない。
 
-Angus Mail 2.0.4のPOP3Store.protocolConnectは一部EOFExceptionをcauseなしのAuthenticationFailedExceptionへ変換する。回線切断を実機で再現したが、認証拒否との確実な区別ができないため、文言だけで通信例外へ読み替えず再試行対象外とする。この場合は通常の失敗として記録され得る。
+Angus Mail 2.0.4のPOP3Store.protocolConnectは一部EOFExceptionをcauseなしのAuthenticationFailedExceptionへ変換する。認証拒否との確実な区別ができないため、文言だけで通信例外へ読み替えず再試行対象外とする。この場合は通常の失敗として記録され得る。
 
 ## 8. 失敗管理と表示
 
@@ -201,17 +214,15 @@ SettingsRepositoryのhealthNotificationEnabledは初期値true。監視設定の
 
 DataStoreへ観測開始、前回通知時刻、最後のmail check失敗時刻を保存する。正常判定にはMonitoring ON、設定ON、最新試行の正常成功、連続失敗0、観測開始から24時間以上、過去24時間に失敗なしを要求する。失敗時刻は成功後も消さず、offline・通信/認証/TLS・削除失敗・その他例外を既存recordFailureと同時に記録する。実チェック中のキャンセルはヘルス履歴だけを不明/中断扱いにし、既存failure countや異常通知仕様は変更しない。実チェックが世代変更中に失敗した場合もヘルス履歴の事実は残すが、旧世代から監視状態・成功・count・保険targetは書き戻さない。skipは失敗履歴を作らない。
 
-異常時の日次通知は出さず、既存の閾値に基づくfailure notificationへ任せる。異常検出件数が1件以上でもmail checkが正常ならヘルスは正常。件数はRoomのPROCESSEDかつalertTriggered=trueの行をreceivedAtEpochMillisによる通知時点の過去24時間（両端を含む）でCOUNTする。単なる新着件数や非採用の一致メールは数えない。重複データ・schema変更はない。既存列は初回保存日時であり、過去に保存したRECEIVEDを後日復旧した警報の実発生時刻を数えるものではない。
+異常時の日次通知は出さず、既存の閾値に基づくfailure notificationへ任せる。異常検出件数が1件以上でもmail checkが正常ならヘルスは正常。件数はRoomのPROCESSEDかつalertTriggered=trueの行をreceivedAtEpochMillisによる通知時点の過去24時間（両端を含む）でCOUNTする。単なる新着件数や非採用の一致メールは数えない。既存列は初回保存日時であり、過去に保存したRECEIVEDを後日復旧した警報の実発生時刻を数えるものではない。
 
 最終メール確認は既存lastSuccessfulCheckAtEpochMillis。端末local timezoneのyyyy/MM/dd HH:mmで日付も表示し、backup skipを成功時刻へ流用しない。専用channel alertkun_monitoring_healthはIMPORTANCE_LOW、音/振動なし、badgeなし、full-screen intentなし。固定notification ID 6003で置換する。既存警報ID 5001/5005、監視失敗ID 6002とは分離する。
 
 通知判定はMonitoringHealthNotificationPolicyの純粋ロジックでepoch millisの24時間（86,400,000ms）を使用する。前回通知から24時間以上経過した最初の正常checkが対象。timezone変更は判定へ影響しない。時計の巻戻りや未来の通知/失敗時刻は通知を抑止する。DataStore editで最新設定・世代・成功時刻を再照合し、前回通知時刻をnotifyより先に永続claimして競合と再起動での二重通知を防ぐ。claim後のprocess停止や通知API失敗ではその日の通知を欠く場合があるが、重複回避を優先する。権限/channelが無効ならclaimしない。ヘルス集計・通知の例外はmail check成功を失敗へ変更しない。
 
-実機の24時間境界検証はisolated DataStoreとin-memory Roomを使う選択instrumentationで行い、本番時計・設定・DBの時刻を書き換えない。本番の24時間定数は短縮しない。
-
 MonitoringFailureKindでDEVICE_OFFLINEとSERVER_UNAVAILABLE、DNS、timeout、認証、TLS・証明書、protocolエラー等を区別する。連続失敗閾値は1～99、default 3。端末offlineも失敗countへ含める。新着0通を含む正常なcheckでcountと異常通知状態をresetする。
 
-通常の失敗ではWorkerの即時retry queueを作らず、次の通常pollで再確認する。キャンセルは伝播させる。監視異常通知は設定した連続失敗回数と、その回の失敗日時を改行して表示する。本文日時は端末local timezoneのyyyy/MM/dd HH:mm:ss、BigTextStyleで複数行を表示する。内部の失敗分類は維持する。認証・TLS等の詳細分類は接続テストUIで表示する。メイン画面に全分類や失敗countを表示する実装はない。
+ネットワーク切替に対する限定retry後も失敗した場合やretry対象外の失敗では、Workerの即時retry queueを作らず、次の通常pollで再確認する。キャンセルは伝播させる。監視異常通知は設定した連続失敗回数と、その回の失敗日時を改行して表示する。本文日時は端末local timezoneのyyyy/MM/dd HH:mm:ss、BigTextStyleで複数行を表示する。内部の失敗分類は維持する。認証・TLS等の詳細分類は接続テストUIで表示する。メイン画面に全分類や失敗countを表示する実装はない。
 
 メイン画面の「最終確認」は日次監視ステータス通知と同じlastSuccessfulCheckAtEpochMillisを参照する。FCM・SCHEDULED_WORK・MANUAL・STARTUPの実チェック全体が正常完了した時刻だけを保存し、削除失敗・backup skip・旧世代skipでは更新しない。明示的な監視OFF時の手動確認成功は更新する。
 
@@ -225,7 +236,7 @@ MonitoringStatusRepositoryのFlowをMainのStateFlowで購読し、新FCM・Gate
 
 現在のGatewayの外部仕様では、同じtoken・間隔での間隔登録も成功時に送信基準時刻をリセットする。したがってtoken再登録・アプリ起動時再登録も、成功時にGatewayの送信基準時刻がリセットされる。端末は成功応答確認時刻を新しい初期基準とし、その時刻以前のFCM基準を解除する。応答成功後に受信したFCMが先に保存された場合は保持し、古い受信の遅延保存は拒否する。失敗では現在設定の既存正常基準を維持する。将来APIがtoken同期のみへ変わる場合は、サーバーの動作を再確認してこの処理も変更する。
 
-設定変更後、Gatewayが現在revisionの設定成功を返すまで、新たなFCMから表示基準は作らない。CHECK_MAIL payloadには間隔・revisionがないため、設定変更失敗後に旧Gatewayスケジュールで届いたFCMを新間隔の成功証明にしないためである。メール確認のhandoffは従来どおりで、表示だけを未定に保つ。
+設定変更後、Gatewayが現在revisionの設定成功を返すまで、新たなFCMから表示基準は作らない。CHECK_MAIL payloadには間隔・revisionがないため、設定変更失敗後に旧Gatewayスケジュールで届いたFCMを新間隔の成功証明にしないためである。メール確認のhandoffは行い、表示は未定に保つ。
 
 ReceivedMail一覧は件名、差出人、初回受信日時、snapshot色を表示し、本文詳細・matchedRuleId・alertTriggeredの表示UIはない。
 
@@ -254,7 +265,7 @@ SCHEDULE_EXACT_ALARM、通知許可・channel有効状態等を確認する。�
 
 PendingAlarmStoreはtokenと最新AlarmEventを保持し、古いtokenの開始を拒否する。新警報で既存出力を置換し、queueを作らない。Stop actionはpending exact alarm、pending情報、音、振動、通知、Serviceを解除する。Serviceは自身の起動・foreground管理を担当し、実出力は同じAlarmControllerへ委譲する。プロセス・端末再起動後の無条件な継続再開は保証しない。
 
-AlarmController.sessionはServiceのactivateで公開するStateFlow<AlarmSession?>。メールID、Rule ID、開始時刻を保持し、Main画面はactive時だけ監視状態の上に大きな「停止」ボタンを表示する。通知Stop、Main UI、確認ツールは既存の同じstopへ到達する。Service破棄でlive stateと出力を解除し、START_STICKYで再生成されたServiceは既存handoffからactivateする。保存済みhandoffだけをUI上のactive証明にはしない。Activity起動・再生成・Composeは状態購読だけで警報を開始しない。
+AlarmController.sessionはServiceのactivateで公開するStateFlow<AlarmSession?>。メールID、Rule ID、開始時刻を保持し、Main画面はactive時だけ監視状態の上に大きな「停止」ボタンを表示する。通知Stop、Main UI、確認ツールは共通AlarmController.stop()へ到達する。Service破棄でlive stateと出力を解除し、START_STICKYで再生成されたServiceは既存handoffからactivateする。保存済みhandoffだけをUI上のactive証明にはしない。Activity起動・再生成・Composeは状態購読だけで警報を開始しない。
 
 同じメールID・Rule IDのUNTIL_STOPPED再handoffはpending/active中に無視する。別メールの警報は現在の出力を解放して置換し、実行中Serviceを再利用する。FCM・Workerにはセッション制御を置かない。通知は既存HIGH channelのongoing + Stop action。Android 14以降はongoingでもスワイプ可能な場合があるため、deleteIntentでactive時だけ通知を復元する。音・振動は再startしない。通知許可取消などで復元不能でもMain画面のStopを残す。
 
@@ -280,7 +291,7 @@ AndroidVibrationOutputはAPI 31以降のVibratorManager、26以降のVibrationEf
 
 ## 12. ServerDeletePolicy
 
-Account単位でIMMEDIATELY / AFTER_1_DAY / AFTER_1_WEEK / AFTER_10_DAYS / AFTER_15_DAYS / AFTER_1_MONTH / NEVERを保存する。既存Account、新規Account、未知値はNEVERへ倒す。旧deleteAfterReceiveフィールドは互換用に残るが、削除判定には使用しない。POP3 / POP3Sだけ実装し、IMAP4 / IMAPSの削除はno-op。UIもIMAPでは選択操作を無効にして説明する。
+Account単位でIMMEDIATELY / AFTER_1_DAY / AFTER_1_WEEK / AFTER_10_DAYS / AFTER_15_DAYS / AFTER_1_MONTH / NEVERを保存する。新規Account、3→4 migration、未知値はNEVERとし、明示保存済みpolicyは保持する。deleteAfterReceiveは互換用フィールドとして残るが、削除判定には使用しない。POP3 / POP3Sだけ実装し、IMAP4 / IMAPSの削除はno-op。UIもIMAPでは選択操作を無効にして説明する。
 
 ### 判定・時刻
 
@@ -321,10 +332,6 @@ Windowsのリポジトリrootから実行:
 
 テスト件数や端末結果は実行時に変わるため、この文書を固定の合格証明にしない。
 
-## 15. 未対応・設計履歴
+## 15. 未対応機能
 
 現在未対応なのは、JSON Export / Import、保存期限による自動purgeと設定UI、メール本文詳細・添付表示、IMAP削除、独自boot時reconcile、公開release配布フロー。OAuth専用の認可UIはない。ライセンスは未選定でLICENSEファイルもない。
-
-初期のPhase 0～13は実装順の計画だった。現在はUI・Room・Rule・警報・WorkManager・POP3S・IMAPS・POP3削除まで実装が進んでおり、「Phase 6はDummyのみ」等を現状説明として残さない。boot対応・export/import・長期試験を、計画の存在だけで実装済みにしない。
-
-過去の常駐MonitoringService案は廃止し、現在はFCMを主監視とし、WorkManagerを保険として使用する。継続警報専用AlarmPlaybackServiceとは区別する。Room migration履歴は本書2章とschema JSONに保持する。利用者向け操作の詳細はuser-guideへ、作業者向け規約はAGENTSへ集約する。
