@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.Flow
 @Dao interface AccountDao { @Query("SELECT * FROM accounts") fun observeAll(): Flow<List<MailAccountEntity>>; @Query("SELECT * FROM accounts WHERE id = :id") suspend fun getById(id: String): MailAccountEntity?; @Upsert suspend fun upsert(entity: MailAccountEntity); @Query("DELETE FROM accounts WHERE id = :id") suspend fun delete(id: String) }
 @Dao interface RuleDao { @Query("SELECT * FROM rules ORDER BY priority ASC") fun observeAll(): Flow<List<AlertRuleEntity>>; @Query("SELECT * FROM rules WHERE id = :id") suspend fun getById(id: String): AlertRuleEntity?; @Upsert suspend fun upsert(entity: AlertRuleEntity); @Query("DELETE FROM rules WHERE id = :id") suspend fun delete(id: String) }
 @Dao interface ReceivedMailDao {
+    @Query("SELECT COUNT(*) FROM received_mails WHERE processingState = 'PROCESSED' AND alertTriggered = 1 AND receivedAtEpochMillis >= :windowStart AND receivedAtEpochMillis <= :windowEnd")
+    suspend fun countTriggeredAlerts(windowStart: Long, windowEnd: Long): Int
     @androidx.room.Transaction
     suspend fun finalizeBatch(outcomes: List<direct.kabu.alertkun.model.MailProcessingOutcome>) {
         require(outcomes.map { it.mailId }.distinct().size == outcomes.size)

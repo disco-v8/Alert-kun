@@ -18,6 +18,10 @@ internal object AlarmSoundMapping {
     fun audioAttributes(type: AlarmSoundType): AudioAttributes = AudioAttributes.Builder()
         .setUsage(usage(type)).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
 
+    /** Continuous alarms keep the chosen URI but use alarm routing for Android 17's exact-alarm exemption. */
+    fun continuousAudioAttributes(): AudioAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_ALARM).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
+
     fun legacyStreamType(type: AlarmSoundType): Int = when (type) {
         AlarmSoundType.ALARM -> AudioManager.STREAM_ALARM
         AlarmSoundType.NOTIFICATION -> AudioManager.STREAM_NOTIFICATION

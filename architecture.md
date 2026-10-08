@@ -33,7 +33,7 @@ Gateway登録はSettingsRepositoryのDataStoreキーmydns_master_idが空でな�
 
 FcmTokenRegistrarは標準HttpsURLConnectionでhttps://fcm.gpg.jp:8119/alertkun-api/set-intervalへmasterid / fcmtoken / rcvintervalをPOSTする。標準TLS・ホスト名検証を使用し、redirectは追従しない。接続・読取timeoutは各15秒、応答解析は8192文字まで。HTTP 2xxとJSON status="success"の両方で成功とする。HTTP・network・JSON・応答statusエラーを区別する。
 
-rcvintervalは登録直前にSettingsRepositoryから現在のpollIntervalMinutesを読む（1～1500分）。起動後のMasterIDと間隔の組をdistinctUntilChangedで監視し、初回・MasterID新規保存／変更・間隔変更で現在tokenを取得して再登録する。onNewTokenも登録する。MasterPwdだけの変更・監視ON/OFFだけでは再登録・削除しない。MasterID空欄は正常skip。登録は独立SupervisorJob内で直列化し、失敗を監視へ伝播させない。process終了を跨ぐ登録保証・永続retryはなく、次回アプリ起動・token更新・設定変更が次の機会になる。正式MyDNS認証・Gateway認証・削除APIは未実装。
+rcvintervalは登録直前にSettingsRepositoryから現在のpollIntervalMinutesを読む（1～1500分）。DataStoreの同一snapshotからMasterID・間隔・監視ON/OFF・主監視revisionをdistinctUntilChangedで監視し、初回・設定変更で現在tokenを取得して再登録する。onNewTokenも登録する。MasterPwdだけの変更では再登録しない。MasterID空欄は正常skip。監視OFFでも既存APIへの登録は維持するが表示基準を作らず、OFF→ONで新しい登録を行う。Gateway送信停止・削除APIは追加しない。登録は独立SupervisorJob内で直列化し、失敗を監視へ伝播させない。process終了を跨ぐ登録保証・永続retryはなく、次回アプリ起動・token更新・設定変更が次の機会になる。正式MyDNS認証・Gateway認証・削除APIは未実装。
 
 設定画面のMyDNS.JPセクションでMasterID／MasterPwdを保存する。MyDnsSettingsRepositoryは既存AndroidKeystoreCredentialStoreの専用credential key mydns_master_password_v1を使い、同じAES/GCM鍵・暗号文保存方式を再利用する。MasterPwdは入力中だけUIのメモリに保持し、成功・画面離脱で空にする。保存済み値をUIへ復号表示せず、存在状態のみ返す。空入力は既存秘密情報を保持する。新規入力は保存・復号一致を確認してからMasterIDをDataStoreへ書き、失敗時は旧credentialとMasterIDの補償を試みる。復元失敗は別の失敗として表示する。保存と補償をprocess内Mutex・NonCancellableで保護するが、異なる保存先を跨ぐprocess停止時の原子性は保証しない。バックアップでKeystore鍵の復元は保証されない。MyDNS.JPへの通信・認証テストは行わず、Gateway JSONへMasterPwdを含めない。
 
@@ -41,15 +41,16 @@ rcvintervalは登録直前にSettingsRepositoryから現在のpollIntervalMinute
 
 ### Room
 
-AlertKunDatabaseの現在のschemaはv4。accounts / rules / received_mailsを保存する。Entityとdomain modelはmapperで分離する。enumは安定した名前で保存し、Android定数やCompose色値を保存しない。
+AlertKunDatabaseの現在のschemaはv5。accounts / rules / received_mailsを保存する。Entityとdomain modelはmapperで分離する。enumは安定した名前で保存し、Android定数やCompose色値を保存しない。
 
 | Migration | 追加内容 | 既存データの扱い |
 | --- | --- | --- |
 | 1 → 2 | rules / received_mailsのbackgroundColor | DEFAULT |
 | 2 → 3 | rulesのsoundType | ALARM。既存soundUriを保持 |
 | 3 → 4 | accountsのserverDeletePolicy | NEVER。旧deleteAfterReceiveの値から削除を有効にしない |
+| 4 → 5 | accountsのtlsValidationMode / certificateFingerprint | STRICT / NULL。旧予約値から信頼を登録しない |
 
-1→4のmigrationを登録し、破壊的fallbackは使用しない。schema JSONはapp/schemas以下に置く。AlarmModeのTHREE_TIMES / FIVE_TIMES追加は既存TEXT列を利用し、schema変更を伴わない。旧ONCE / UNTIL_STOPPEDはそのまま読み込む。
+1→5のmigrationを登録し、破壊的fallbackは使用しない。schema JSONはapp/schemas以下に置く。AlarmModeのTHREE_TIMES / FIVE_TIMES追加は既存TEXT列を利用し、schema変更を伴わない。旧ONCE / UNTIL_STOPPEDはそのまま読み込む。
 
 ReceivedMailの重要な情報はid、accountId、remoteMessageId、receivedAtEpochMillis、From、ヘッダー、Subject、必要な本文、bodyFetched、processingState、alertTriggered、matchedRuleId、backgroundColor。UNIQUE(accountId, remoteMessageId)で重複保存を防ぐ。UIDL / UIDだけを先に保存せず、再処理に必要なデータとRECEIVEDを同じ行の挿入で確定する。
 
@@ -71,9 +72,11 @@ ManifestはallowBackup=true。現在のbackup / data extraction規則はpending_
 
 ## 3. メール通信と識別
 
-JakartaMailReceiverはAngus Mailで受信する。POP3S / IMAPSはimplicit TLSと標準証明書・ホスト名検証を使用する。POP3 / IMAP4は非TLSで、STARTTLSは有効にしない。接続・読取・書込タイムアウトは各30秒であり、Coordinator全体の制限時間ではない。
+JakartaMailReceiverはAngus Mailで受信する。POP3S / IMAPSはimplicit TLSで、アカウントのTlsValidationModeを使用する。既存・新規アカウントはSTRICTが標準。POP3 / IMAP4は非TLSで、STARTTLSは有効にしない。接続・読取・書込タイムアウトは各30秒であり、Coordinator全体の制限時間ではない。
 
 受信対象はINBOX。READ_ONLYで開き、IMAPの既読変更やexpungeを行わない。接続テストは接続・認証と最小限の確認だけを行い、削除経路を呼ばない。
+
+MailConnectionSettingsで受信用SessionとPOP3削除専用socketのprotocol・timeout・TLS設定を共通化する。削除socketも受信と同じAngus SocketFetcherを使用する。STRICTは標準TrustManagerFactoryのCA検証にleafの有効期間確認を加え、POP3S/IMAPSともssl.checkserveridentity=trueとAngus標準MailHostnameVerifierを明示する。AndroidのLDAPS endpoint検証の有無に依存せずホスト名を検証する。CA_VALIDATED_NO_HOSTNAMEは明示設定時だけ名前一致を要求しないが、同じCA検証・有効期間・TLS暗号化を維持する。TLS検証を全体で一律無効にせず、trust-allや常にtrueのHostnameVerifierを使わない。
 
 - POP3の永続IDはUIDL。セッション内のメッセージ番号を保存しない。
 - IMAPの永続IDはUIDVALIDITYとUIDを組み合わせた文字列。UIDVALIDITY変更後の別メールを混同しない。
@@ -84,7 +87,7 @@ JakartaMailReceiverはAngus Mailで受信する。POP3S / IMAPSはimplicit TLS�
 
 有効Accountがある場合はAccountMailReceiverがそれらを処理する。複数Accountの候補は1回のCoordinator全体で比較する。有効Accountが0件ならDummyMailReceiverへ切り替わる。これは開発確認用であり、実サーバーへの接続成功を意味しない。Dummyのキューと失敗再現はprocess-local。通常Account UIには、既存Accountを残したまま新規Accountを追加する専用操作が現在ない。
 
-自己署名証明書のfingerprint確認・信頼登録は未実装。trustedCertificateIdはモデル上の予約情報であり、信頼管理機能の実装を意味しない。trust-allやホスト名検証無効化は禁止する。
+PINNED_CERTIFICATEは明示承認済みleafのDER証明書全体のSHA-256を照合し、CA・名前一致の代わりに固定証明書の一致と有効期間を要求する。初回の接続テストは証明書を取得してhandshakeを拒否し、認証/受信/削除を行わない。fingerprintを表示し「この証明書を信頼する」でeditorへ採用した後、通常の接続テスト成功と保存を必要とする。変更時はCERTIFICATE_CHANGEDとして拒否し、設定画面の再確認・再承認まで自動更新しない。接続テストへ変更エラーを表示し、既存の連続失敗閾値で通知する際も証明書変更の案内を付記する。ホスト・ポート・protocolの編集で承認を解除する。Room v5 migrationはtlsValidationModeをSTRICT、certificateFingerprintをNULLにする。旧trustedCertificateIdは予約情報のまま信頼判定に使用しない。
 
 ## 4. RECEIVED / PROCESSEDと復旧
 
@@ -174,15 +177,57 @@ StartupReconcileGateはprocess内1回を維持する。監視ONでcheckImmediate
 
 ACTION_TIME_CHANGEDはwall clockとelapsedRealtimeの差を使い、基準があり60秒以上の補正ならrebaseする。timezone変更は表示のみ。独自BOOT_COMPLETED reconcileは未実装で、WorkManager自身の永続work管理に依存する。
 
-常駐MonitoringService、dataSync FGS、監視用AlarmManager、Expedited Work、独自長時間WakeLock、長時間polling loopは使用しない。NetworkType.CONNECTED constraintでoffline失敗を隠さない。FCMもPeriodicWorkもAndroidの実行時刻や自然Doze中の即時実行を保証しない。新方式の15～20分実機観測と二重IMAPS接続解消の確認は別途実施する。
+常駐MonitoringService、dataSync FGS、監視用AlarmManager、Expedited Work、独自長時間WakeLock、長時間polling loopは使用しない。NetworkType.CONNECTED constraintでoffline失敗を隠さない。FCMもPeriodicWorkもAndroidの実行時刻や自然Doze中の即時実行を保証しない。2026-10-08のPixel 7a・画面OFF/充電中の20分観測ではFCM正常確認、15分保険の自然実行とskip、旧short予約取消、二重受信抑止を確認した。自然Dozeでの長時間確認は別途実施する。
+
+### デフォルトネットワーク切替への猶予
+
+実チェックのexecutionMutex内でDefaultNetworkMonitorを1個だけ登録し、終了・失敗・キャンセル時に解除する。registerDefaultNetworkCallbackのonAvailable / onLostでdefault networkの変更世代を追跡し、onCapabilitiesChangedの引数からINTERNET / VALIDATEDを更新する。callback内では同期問い合わせや通信を行わない。Wi-Fi・モバイル・VPNなどtransportで判定を分けない。
+
+NetworkStabilizationは1チェック全体で合計最大8秒だけcallbackによる復旧を待つ。既存の各接続・読み書きtimeout（30秒）より短く、manualにも同じ上限を適用する。利用可能になれば即再開する。capabilityは補助情報であり、猶予後にdefault networkが存在すれば実接続結果を最終判定とする。存在しなければDEVICE_OFFLINEで通常の失敗処理へ進む。
+
+読み取り接続中にdefault network変更を観測し、socket・EOF・DNS・接続timeoutなど通信経路の例外が発生した場合だけ、同じ待機予算内で最大1回再試行する。認証・TLS・証明書・protocolエラーは対象外。Coordinator全体、Room確定、Rule評価、警報handoff、POP3削除は再実行しない。DELE / QUITの結果が不明な削除は即失敗とし、通常の次回チェックへ委ねる。UID/UIDL重複防止を維持する。
+
+FCM・保険・手動・起動時は同じMailReceiver wrapperを利用する。Workerは最終結果だけを成功時刻・failure count・health履歴へ反映し、復旧した途中のエラーは通知しない。OFF・generation・backup skip判定は登録前のまま維持する。長時間待機・無限retry・監視FGS・WakeLockは追加しない。
+
+Angus Mail 2.0.4のPOP3Store.protocolConnectは一部EOFExceptionをcauseなしのAuthenticationFailedExceptionへ変換する。回線切断を実機で再現したが、認証拒否との確実な区別ができないため、文言だけで通信例外へ読み替えず再試行対象外とする。この場合は通常の失敗として記録され得る。
 
 ## 8. 失敗管理と表示
+
+### 1日1回の監視ヘルス通知
+
+正常なmail checkを永続成功として記録した直後、既存executionMutex内でMonitoringHealthReporterを呼ぶ。FCM / SCHEDULED_WORK / MANUAL / STARTUPの正常成功が対象で、保険skip・OFF skip・世代不一致skipでは呼ばない。AlarmControllerと独立し、新しい定期Worker・AlarmManagerは追加しない。
+
+SettingsRepositoryのhealthNotificationEnabledは初期値true。監視設定の「監視を有効にする」直下にある「異常がなくても一日一回通知」チェックボックスで選び、他の監視項目と同じ保存操作で原子的に保存する。画面上のMonitoring OFFでは操作できないがチェック状態を保持する。保存時は既存executionMutexで通知の判定・投稿と排他し、通知設定OFFなら既存ヘルス通知だけを取り消す。Monitoring OFFでも通知しない。初回正常checkから24時間の観測期間を確保し、通知設定またはMonitoringをOFFにした場合は観測開始を解除する。再ON後も初回正常checkから24時間待つ。通常のprocess再起動・世代変更は観測開始と前回通知時刻を保持する。未完了checkの痕跡がある場合は観測期間を再開始し、知らない期間を正常と扱わない。
+
+DataStoreへ観測開始、前回通知時刻、最後のmail check失敗時刻を保存する。正常判定にはMonitoring ON、設定ON、最新試行の正常成功、連続失敗0、観測開始から24時間以上、過去24時間に失敗なしを要求する。失敗時刻は成功後も消さず、offline・通信/認証/TLS・削除失敗・その他例外を既存recordFailureと同時に記録する。実チェック中のキャンセルはヘルス履歴だけを不明/中断扱いにし、既存failure countや異常通知仕様は変更しない。実チェックが世代変更中に失敗した場合もヘルス履歴の事実は残すが、旧世代から監視状態・成功・count・保険targetは書き戻さない。skipは失敗履歴を作らない。
+
+異常時の日次通知は出さず、既存の閾値に基づくfailure notificationへ任せる。異常検出件数が1件以上でもmail checkが正常ならヘルスは正常。件数はRoomのPROCESSEDかつalertTriggered=trueの行をreceivedAtEpochMillisによる通知時点の過去24時間（両端を含む）でCOUNTする。単なる新着件数や非採用の一致メールは数えない。重複データ・schema変更はない。既存列は初回保存日時であり、過去に保存したRECEIVEDを後日復旧した警報の実発生時刻を数えるものではない。
+
+最終メール確認は既存lastSuccessfulCheckAtEpochMillis。端末local timezoneのyyyy/MM/dd HH:mmで日付も表示し、backup skipを成功時刻へ流用しない。専用channel alertkun_monitoring_healthはIMPORTANCE_LOW、音/振動なし、badgeなし、full-screen intentなし。固定notification ID 6003で置換する。既存警報ID 5001/5005、監視失敗ID 6002とは分離する。
+
+通知判定はMonitoringHealthNotificationPolicyの純粋ロジックでepoch millisの24時間（86,400,000ms）を使用する。前回通知から24時間以上経過した最初の正常checkが対象。timezone変更は判定へ影響しない。時計の巻戻りや未来の通知/失敗時刻は通知を抑止する。DataStore editで最新設定・世代・成功時刻を再照合し、前回通知時刻をnotifyより先に永続claimして競合と再起動での二重通知を防ぐ。claim後のprocess停止や通知API失敗ではその日の通知を欠く場合があるが、重複回避を優先する。権限/channelが無効ならclaimしない。ヘルス集計・通知の例外はmail check成功を失敗へ変更しない。
+
+実機の24時間境界検証はisolated DataStoreとin-memory Roomを使う選択instrumentationで行い、本番時計・設定・DBの時刻を書き換えない。本番の24時間定数は短縮しない。
 
 MonitoringFailureKindでDEVICE_OFFLINEとSERVER_UNAVAILABLE、DNS、timeout、認証、TLS・証明書、protocolエラー等を区別する。連続失敗閾値は1～99、default 3。端末offlineも失敗countへ含める。新着0通を含む正常なcheckでcountと異常通知状態をresetする。
 
 通常の失敗ではWorkerの即時retry queueを作らず、次の通常pollで再確認する。キャンセルは伝播させる。監視異常通知は設定した連続失敗回数と、その回の失敗日時を改行して表示する。本文日時は端末local timezoneのyyyy/MM/dd HH:mm:ss、BigTextStyleで複数行を表示する。内部の失敗分類は維持する。認証・TLS等の詳細分類は接続テストUIで表示する。メイン画面に全分類や失敗countを表示する実装はない。
 
-メイン画面の「最終確認」は最後の成功時刻。「次回バックアップ」はWorkManager保険の内部targetを端末local timezoneでYYYY/MM/DD HH:mm頃と表示する。FCMの次回到達時刻を示すものではない。監視中で未確定なら未定、停止中ならなし。ReceivedMail一覧は件名、差出人、アプリの初回受信日時、snapshot色を表示し、本文詳細・matchedRuleId・alertTriggeredの表示UIはない。
+メイン画面の「最終確認」は日次監視ステータス通知と同じlastSuccessfulCheckAtEpochMillisを参照する。FCM・SCHEDULED_WORK・MANUAL・STARTUPの実チェック全体が正常完了した時刻だけを保存し、削除失敗・backup skip・旧世代skipでは更新しない。明示的な監視OFF時の手動確認成功は更新する。
+
+「次回確認」はFCM主監視によるおおよその予定であり確定実行予約ではない。現在の主監視設定に有効な直近CHECK_MAILの端末受信時刻＋ユーザー確認間隔を優先し、未受信なら現在設定のGateway登録／設定成功時刻＋間隔を使用する。local timezoneのyyyy/MM/dd HH:mm頃を表示し、秒を省く。監視OFFは「なし」、有効な基準が両方ない場合だけ「未定」。最終確認・WorkManagerの保険targetは算出に使わない。
+
+主監視revision（fcm_schedule_revision）はON/OFF・間隔・MasterID変更と同じDataStore editで更新する。既存scheduleGenerationは保険予約の起動時rebase・時計補正でも変わるため、その変更で主監視の時刻を無効化しないよう主監視revisionを分離する。FCM時刻とGateway成功時刻にはそれぞれrevisionを付けて保存し、現在revisionと一致する値だけFlowに公開する。revisionのない旧履歴は無効。設定変更前に受信して非同期保存を待っていたFCMは設定変更時刻との照合で排除する。UIへ基準の間隔も渡し、別Flowとの更新順序により旧基準＋新間隔を一時表示しない。
+
+Gateway成功はHTTP 2xxかつJSON status=successを確認した完了時刻だけを保存する。通信中に設定が変わった応答はDataStore edit内でもrevision照合して排除する。失敗・skip・要求送信時には保存せず、同じ設定の以前の成功を失敗時刻で上書きしない。新設定が未成功なら以前の設定の基準は公開しない。予定時刻自体は保存せず、基準＋間隔から導出する。既存monitoring_next_scheduledは保険の内部状態として維持する。
+
+MonitoringStatusRepositoryのFlowをMainのStateFlowで購読し、新FCM・Gateway成功・設定変更を画面再オープンなしで反映する。期限を過ぎても同じ日時を保持し、時計だけの周期繰り上げ・毎秒／毎分タイマー・待機／遅延／リトライ表示を追加しない。FCM未達そのものはMainで異常扱いせず、既存の保険による実接続と連続失敗通知が異常認識を担当する。表示状態は実行mutex・保険skip・警報・メール処理へ影響しない。
+
+現在のGatewayの外部仕様では、同じtoken・間隔での間隔登録も成功時に送信基準時刻をリセットする。したがってtoken再登録・アプリ起動時再登録も、成功時にGatewayの送信基準時刻がリセットされる。端末は成功応答確認時刻を新しい初期基準とし、その時刻以前のFCM基準を解除する。応答成功後に受信したFCMが先に保存された場合は保持し、古い受信の遅延保存は拒否する。失敗では現在設定の既存正常基準を維持する。将来APIがtoken同期のみへ変わる場合は、サーバーの動作を再確認してこの処理も変更する。
+
+設定変更後、Gatewayが現在revisionの設定成功を返すまで、新たなFCMから表示基準は作らない。CHECK_MAIL payloadには間隔・revisionがないため、設定変更失敗後に旧Gatewayスケジュールで届いたFCMを新間隔の成功証明にしないためである。メール確認のhandoffは従来どおりで、表示だけを未定に保つ。
+
+ReceivedMail一覧は件名、差出人、初回受信日時、snapshot色を表示し、本文詳細・matchedRuleId・alertTriggeredの表示UIはない。
 
 ## 9. 警報・有限回数
 
@@ -209,6 +254,14 @@ SCHEDULE_EXACT_ALARM、通知許可・channel有効状態等を確認する。�
 
 PendingAlarmStoreはtokenと最新AlarmEventを保持し、古いtokenの開始を拒否する。新警報で既存出力を置換し、queueを作らない。Stop actionはpending exact alarm、pending情報、音、振動、通知、Serviceを解除する。Serviceは自身の起動・foreground管理を担当し、実出力は同じAlarmControllerへ委譲する。プロセス・端末再起動後の無条件な継続再開は保証しない。
 
+AlarmController.sessionはServiceのactivateで公開するStateFlow<AlarmSession?>。メールID、Rule ID、開始時刻を保持し、Main画面はactive時だけ監視状態の上に大きな「停止」ボタンを表示する。通知Stop、Main UI、確認ツールは既存の同じstopへ到達する。Service破棄でlive stateと出力を解除し、START_STICKYで再生成されたServiceは既存handoffからactivateする。保存済みhandoffだけをUI上のactive証明にはしない。Activity起動・再生成・Composeは状態購読だけで警報を開始しない。
+
+同じメールID・Rule IDのUNTIL_STOPPED再handoffはpending/active中に無視する。別メールの警報は現在の出力を解放して置換し、実行中Serviceを再利用する。FCM・Workerにはセッション制御を置かない。通知は既存HIGH channelのongoing + Stop action。Android 14以降はongoingでもスワイプ可能な場合があるため、deleteIntentでactive時だけ通知を復元する。音・振動は再startしない。通知許可取消などで復元不能でもMain画面のStopを残す。
+
+継続再生だけMediaPlayer.setWakeMode(PARTIAL_WAKE_LOCK)を使用する。playerの停止・解放に連動し、画面を点灯させず、監視WorkerにWakeLockを追加しない。継続playerのエラー・予期しない完了は共通Stopで全出力・Service・通知・sessionを解除する。Audio Focusによる中断・端末音量・DNDなどOSの音声制御には従う。
+
+電源操作によるscreen offではAndroidがALARM振動もキャンセルする場合がある。ServiceだけがACTION_SCREEN_OFFを購読し、300ms後に一度、現在のtokenがまだactiveなら同じ振動出力を再設定する。音・focus・session・通知を再開始せず、Service破棄でcallbackを解除する。token照合によりStop後・置換後の古いcallbackは出力を復活させない。自然なscreen timeoutと手動screen offの両方でsessionは解除しない。
+
 ## 11. Sound type・AudioAttributes・振動preview
 
 | AlarmSoundType | 音源一覧・標準音 | AudioAttributes usage |
@@ -219,7 +272,7 @@ PendingAlarmStoreはtokenと最新AlarmEventを保持し、古いtokenの開始�
 
 AlarmSoundMappingでAndroid定数へ変換する。soundUri指定があれば使用し、未指定・開けない場合はそのカテゴリのAndroid標準URIへfallbackする。種別変更時はUIで旧soundUriをnullへ戻す。picker結果は起動時の種別と現在種別が一致する場合のみ反映する。
 
-ONCE / 3回 / 5回 / UNTIL_STOPPEDで同じsoundTypeのusageを使用する。CONTENT_TYPE_SONIFICATION。継続再生は同usageのAudio Focusを要求し、API 24～25では対応するlegacy streamを使用する。有限回数経路は明示的Audio Focus要求を行わない。端末音量変更、DND回避、channel音への移行は行わない。音量・マナーモード・DNDの最終挙動はAndroidと端末設定に従う。
+表のusageは有限回数とpreviewに適用する。UNTIL_STOPPEDだけ選択した音源URI・カテゴリfallbackを維持し、再生用途とAudio FocusをUSAGE_ALARM（API 24～25はSTREAM_ALARM）に統一する。Android 17 / target 37では、FCM経由で開始したFGSがwhile-in-use能力を持たず、通知音usageの背景再生がOSにミュートされる。exact alarm権限によるUSAGE_ALARM例外へ適合させる（[Android公式仕様](https://developer.android.com/about/versions/17/changes/bg-audio)）。アラーム音量・DNDに従い、端末設定は変更しない。CONTENT_TYPE_SONIFICATIONと有限回数のAudio Focus非要求を維持する。
 
 VibrationPatternはNONE / PATTERN_1 / PATTERN_2 / PATTERN_3。共通AlarmVibration.timingsはそれぞれなし、[0,300]、[0,200,150,200]、[0,350,150,350,150,350]ミリ秒。継続用のみ末尾1000ms休止を追加してrepeat index 0、有限回数とpreviewはrepeat -1。
 
@@ -241,7 +294,7 @@ CoordinatorのhandoffとRoom batch確定が成功した後、Pop3ServerDeletion�
 
 全DELEの+OK確認後だけQUITを送信し、正常終了で削除を確定する。DELE途中のエラー・キャンセル・不明状態ではQUITを送らずsocketを閉じ、削除確定を避ける。QUIT送信後に応答が失われた場合の確定有無は不明なので、次回pollでサーバー状態を確認する。
 
-削除失敗は現在PROTOCOL_ERROR等のpoll失敗として既存の監視失敗管理へ渡す。保存済みPROCESSEDは維持し、次回pollで削除を再試行する。再保存・再警報しない。受信や接続テストのREAD_ONLYセッションを削除用に流用しない。
+削除失敗は接続timeout・DNS・TLS・認証・protocolの原因に応じたpoll失敗として既存の監視失敗管理へ渡す。DEBUGログは接続/TLS、greeting、認証、UIDL、lookup、DELE、QUITの段階と対象件数・例外型だけを記録し、ホスト名・認証値・UIDL・メール内容・サーバー応答本文は出さない。保存済みPROCESSEDは維持し、次回pollで削除を再試行する。再保存・再警報しない。受信や接続テストのREAD_ONLYセッションを削除用に流用しない。
 
 ## 13. UI・権限・確認用UI
 
@@ -251,7 +304,7 @@ Account SettingsのPrimary Actionは接続テスト成功 → 設定を保存 �
 
 Settingsは言語、監視間隔・連続失敗閾値・監視ON/OFF・起動時確認と保存、Divider以下の開発者ツール、アラーム確認用UIで構成する。確認用sound / vibration / countはRuleへ保存しない。手動アラーム確認は本番と同じControllerを使う。Dummy受信操作は有効Accountが0件の場合の確認用。開発者UIは現在debug限定表示ではない。
 
-Manifestのアプリ宣言はINTERNET、ACCESS_NETWORK_STATE、VIBRATE、POST_NOTIFICATIONS、SCHEDULE_EXACT_ALARM、FOREGROUND_SERVICE、FOREGROUND_SERVICE_MEDIA_PLAYBACK。通知はAndroid 13以降でruntime許可、exact alarmはAndroid 12以降で設定画面への導線を持つ。DND policy access、battery最適化除外を要求するUIはない。
+Manifestのアプリ宣言はINTERNET、ACCESS_NETWORK_STATE、VIBRATE、WAKE_LOCK、POST_NOTIFICATIONS、SCHEDULE_EXACT_ALARM、FOREGROUND_SERVICE、FOREGROUND_SERVICE_MEDIA_PLAYBACK。通知はAndroid 13以降でruntime許可、exact alarmはAndroid 12以降で設定画面への導線を持つ。DND policy access、battery最適化除外を要求するUIはない。
 
 ## 14. テスト・ビルド
 
@@ -270,8 +323,8 @@ Windowsのリポジトリrootから実行:
 
 ## 15. 未対応・設計履歴
 
-現在未対応なのは、自己署名証明書fingerprintの信頼登録、JSON Export / Import、保存期限による自動purgeと設定UI、メール本文詳細・添付表示、IMAP削除、独自boot時reconcile、公開release配布フロー。OAuth専用の認可UIはない。ライセンスは未選定でLICENSEファイルもない。
+現在未対応なのは、JSON Export / Import、保存期限による自動purgeと設定UI、メール本文詳細・添付表示、IMAP削除、独自boot時reconcile、公開release配布フロー。OAuth専用の認可UIはない。ライセンスは未選定でLICENSEファイルもない。
 
-初期のPhase 0～13は実装順の計画だった。現在はUI・Room・Rule・警報・WorkManager・POP3S・IMAPS・POP3削除まで実装が進んでおり、「Phase 6はDummyのみ」等を現状説明として残さない。自己署名信頼・boot対応・export/import・長期試験を、計画の存在だけで実装済みにしない。
+初期のPhase 0～13は実装順の計画だった。現在はUI・Room・Rule・警報・WorkManager・POP3S・IMAPS・POP3削除まで実装が進んでおり、「Phase 6はDummyのみ」等を現状説明として残さない。boot対応・export/import・長期試験を、計画の存在だけで実装済みにしない。
 
 過去の常駐MonitoringService案は廃止し、現在はFCMを主監視とし、WorkManagerを保険として使用する。継続警報専用AlarmPlaybackServiceとは区別する。Room migration履歴は本書2章とschema JSONに保持する。利用者向け操作の詳細はuser-guideへ、作業者向け規約はAGENTSへ集約する。

@@ -57,6 +57,10 @@ fun AccountSettingsScreen(onBack: () -> Unit, viewModel: AccountSettingsViewMode
             }
             OutlinedTextField(editor.host, { setEditor(editor.copy(host = it)) }, enabled = !state.busy, label = { Text(stringResource(R.string.account_host)) }, modifier = Modifier.fillMaxWidth().testTag("account_host"))
             OutlinedTextField(editor.port, { setEditor(editor.copy(port = it)) }, enabled = !state.busy, label = { Text(stringResource(R.string.account_port)) }, modifier = Modifier.fillMaxWidth().testTag("account_port"))
+            if (editor.protocol in listOf(MailProtocol.POP3S, MailProtocol.IMAPS)) {
+                TlsValidationSelector(editor.tlsValidationMode, !state.busy, editor.certificateFingerprint,
+                    state.pendingCertificateFingerprint, { setEditor(editor.copy(tlsValidationMode = it)) }, viewModel::approveCertificate)
+            }
             OutlinedTextField(editor.username, { setEditor(editor.copy(username = it)) }, enabled = !state.busy, label = { Text(stringResource(R.string.account_username)) }, modifier = Modifier.fillMaxWidth().testTag("account_username"))
             key(editor.id) {
                 AccountPasswordField(editor.password, { setEditor(editor.copy(password = it)) }, passwordVisible, { passwordVisible = !passwordVisible }, editor.hasSavedPassword, !state.busy, state.credentialLoading)
@@ -147,7 +151,12 @@ private fun AccountStatus(status: AccountOperationStatus, running: Int, success:
 
 private fun connectionFailureLabel(kind: MonitoringFailureKind?): Int = when (kind) {
     MonitoringFailureKind.AUTHENTICATION_FAILURE -> R.string.connection_auth_failed
-    MonitoringFailureKind.TLS_FAILURE, MonitoringFailureKind.CERTIFICATE_UNTRUSTED -> R.string.connection_tls_failed
+    MonitoringFailureKind.TLS_FAILURE -> R.string.connection_tls_failed
+    MonitoringFailureKind.CERTIFICATE_UNTRUSTED -> R.string.tls_ca_failed
+    MonitoringFailureKind.CERTIFICATE_EXPIRED -> R.string.tls_expired
+    MonitoringFailureKind.HOSTNAME_MISMATCH -> R.string.tls_hostname_failed
+    MonitoringFailureKind.CERTIFICATE_NOT_APPROVED -> R.string.tls_not_approved
+    MonitoringFailureKind.CERTIFICATE_CHANGED -> R.string.tls_certificate_changed
     MonitoringFailureKind.DNS_FAILURE -> R.string.connection_dns_failed
     MonitoringFailureKind.CONNECTION_TIMEOUT -> R.string.connection_timeout
     MonitoringFailureKind.PROTOCOL_ERROR -> R.string.connection_protocol_failed

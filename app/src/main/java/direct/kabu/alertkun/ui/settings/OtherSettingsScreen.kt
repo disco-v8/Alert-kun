@@ -21,7 +21,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Switch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,11 +58,13 @@ fun OtherSettingsScreen(
     var pollInterval by remember { mutableStateOf("") }
     var failureThreshold by remember { mutableStateOf("") }
     var monitoringEnabled by remember { mutableStateOf(false) }
+    var healthNotificationEnabled by remember { mutableStateOf(true) }
     var checkImmediatelyOnAppStart by remember { mutableStateOf(true) }
     LaunchedEffect(monitoringSettings) {
         pollInterval = monitoringSettings.pollIntervalMinutes.toString()
         failureThreshold = monitoringSettings.consecutiveFailureThreshold.toString()
         monitoringEnabled = monitoringSettings.monitoringEnabled
+        healthNotificationEnabled = monitoringSettings.healthNotificationEnabled
         checkImmediatelyOnAppStart = monitoringSettings.checkImmediatelyOnAppStart
     }
     var pendingAlarm by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -107,21 +108,21 @@ fun OtherSettingsScreen(
             OutlinedTextField(value = pollInterval, onValueChange = { pollInterval = it }, isError = pollInterval.isNotEmpty() && !pollValid, label = { Text(stringResource(R.string.poll_interval_minutes)) }, modifier = Modifier.fillMaxWidth().testTag("monitoring_poll_interval"))
             OutlinedTextField(value = failureThreshold, onValueChange = { failureThreshold = it }, isError = failureThreshold.isNotEmpty() && !thresholdValid, label = { Text(stringResource(R.string.consecutive_failure_threshold)) }, modifier = Modifier.fillMaxWidth().testTag("monitoring_failure_threshold"))
             androidx.compose.foundation.layout.Row {
-                Checkbox(checked = monitoringEnabled, onCheckedChange = { monitoringEnabled = it })
+                Checkbox(checked = monitoringEnabled, onCheckedChange = { monitoringEnabled = it }, modifier = Modifier.testTag("monitoring_enabled"))
                 Text(stringResource(R.string.monitoring_enabled))
             }
+            MonitoringHealthSetting(healthNotificationEnabled, monitoringEnabled) { healthNotificationEnabled = it }
             androidx.compose.foundation.layout.Row {
-                Switch(checked = checkImmediatelyOnAppStart, onCheckedChange = { checkImmediatelyOnAppStart = it }, modifier = Modifier.testTag("check_immediately_on_app_start"))
+                Checkbox(checked = checkImmediatelyOnAppStart, onCheckedChange = { checkImmediatelyOnAppStart = it }, modifier = Modifier.testTag("check_immediately_on_app_start"))
                 Text(stringResource(R.string.check_immediately_on_app_start))
             }
-            Button(onClick = { val poll = pollInterval.toIntOrNull(); val threshold = failureThreshold.toIntOrNull(); if (pollValid && thresholdValid) monitoringViewModel.update(poll!!, threshold!!, monitoringEnabled, checkImmediatelyOnAppStart) }, enabled = pollValid && thresholdValid, modifier = Modifier.fillMaxWidth().testTag("monitoring_save")) { Text(stringResource(R.string.save_monitoring_settings)) }
+            Button(onClick = { val poll = pollInterval.toIntOrNull(); val threshold = failureThreshold.toIntOrNull(); if (pollValid && thresholdValid) monitoringViewModel.update(poll!!, threshold!!, monitoringEnabled, checkImmediatelyOnAppStart, healthNotificationEnabled) }, enabled = pollValid && thresholdValid, modifier = Modifier.fillMaxWidth().testTag("monitoring_save")) { Text(stringResource(R.string.save_monitoring_settings)) }
             HorizontalDivider(Modifier.testTag("alarm_test_divider"))
-            Text(stringResource(R.string.developer_tools))
+            Text(stringResource(R.string.developer_tools), Modifier.testTag("developer_tools"))
             Button(onClick = monitoringViewModel::queueMatching, modifier = Modifier.fillMaxWidth().testTag("queue_dummy_matching_mail")) { Text(stringResource(R.string.queue_dummy_matching_mail)) }
             Button(onClick = monitoringViewModel::queueNonMatching, modifier = Modifier.fillMaxWidth().testTag("queue_dummy_non_matching_mail")) { Text(stringResource(R.string.queue_dummy_non_matching_mail)) }
             Button(onClick = monitoringViewModel::runNow, modifier = Modifier.fillMaxWidth().testTag("run_poll_now")) { Text(stringResource(R.string.run_poll_now)) }
             OutlinedButton(onClick = monitoringViewModel::simulateFailure, modifier = Modifier.fillMaxWidth().testTag("simulate_poll_failure")) { Text(stringResource(R.string.simulate_poll_failure)) }
-            Text(stringResource(R.string.manual_alarm_note), Modifier.testTag("alarm_test_note"))
             AlarmPermissionControls()
             AlarmSoundSelector(testSound, testSoundType,
                 onSoundTypeSelected = { type ->
@@ -143,6 +144,15 @@ fun OtherSettingsScreen(
                 onStop = { viewModel.stop() },
             )
         }
+    }
+}
+
+@Composable
+internal fun MonitoringHealthSetting(checked: Boolean, monitoringEnabled: Boolean, onChanged: (Boolean) -> Unit) {
+    androidx.compose.foundation.layout.Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Checkbox(checked = checked, enabled = monitoringEnabled, onCheckedChange = onChanged,
+            modifier = Modifier.testTag("monitoring_health_notification"))
+        Text(stringResource(R.string.monitoring_health_enabled))
     }
 }
 

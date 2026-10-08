@@ -13,6 +13,8 @@ import direct.kabu.alertkun.mail.common.MailReceiverException
 import direct.kabu.alertkun.model.MailAccount
 import direct.kabu.alertkun.model.MailProtocol
 import direct.kabu.alertkun.model.ServerDeletePolicy
+import direct.kabu.alertkun.model.TlsValidationMode
+import direct.kabu.alertkun.mail.common.inspectServerCertificate
 import direct.kabu.alertkun.monitoring.MonitoringFailureKind
 import direct.kabu.alertkun.security.AndroidKeystoreCredentialStore
 import direct.kabu.alertkun.security.CredentialStore
@@ -36,6 +38,8 @@ data class AccountEditor(
     val enabled: Boolean = true,
     val hasSavedPassword: Boolean = false,
     val serverDeletePolicy: ServerDeletePolicy = ServerDeletePolicy.NEVER,
+    val tlsValidationMode: TlsValidationMode = TlsValidationMode.STRICT,
+    val certificateFingerprint: String? = null,
 ) {
     val connectionIssues: List<AccountConnectionIssue> get() = buildList {
         if (host.isBlank()) add(AccountConnectionIssue.HOST)
@@ -62,6 +66,7 @@ data class AccountSettingsState(
     val formRevision: Long = 0,
     val verifiedRevision: Long? = null,
     val savedRevision: Long? = null,
+    val pendingCertificateFingerprint: String? = null,
 ) {
     val busy: Boolean get() = saveStatus == AccountOperationStatus.RUNNING || testStatus == AccountOperationStatus.RUNNING
     val currentFormVerified: Boolean get() = verifiedRevision == formRevision
@@ -84,7 +89,8 @@ data class AccountSettingsState(
         return copy(editor = newEditor, formRevision = formRevision + 1,
             verifiedRevision = null, savedRevision = null, saveStatus = AccountOperationStatus.IDLE,
             testStatus = AccountOperationStatus.IDLE, failureKind = null,
-            credentialLoading = newEditor.id == editor.id && credentialLoading, saveFailure = null)
+            credentialLoading = newEditor.id == editor.id && credentialLoading, saveFailure = null,
+            pendingCertificateFingerprint = null)
     }
 }
 
@@ -92,6 +98,7 @@ class AccountSettingsViewModel @JvmOverloads constructor(
     application: Application,
     private val repository: AccountRepository = AccountRepository(AlertKunDatabase.getInstance(application).accountDao()),
     private val credentials: CredentialStore = AndroidKeystoreCredentialStore(application),
+    private val inspectCertificate: suspend (MailAccount) -> String = ::inspectServerCertificate,
     private val testConnection: suspend (MailAccount, CredentialStore) -> Unit = { account, secrets -> AccountMailReceiver(listOf(account), secrets).testConnection(account) },
 ) : AndroidViewModel(application) {
     private val mutableState = MutableStateFlow(AccountSettingsState())
@@ -113,7 +120,15 @@ class AccountSettingsViewModel @JvmOverloads constructor(
         editorSelected = true
         val changedAccount = state.value.editor.id != editor.id
         if (changedAccount) editorRevision++
-        mutableState.value = state.value.edited(editor)
+        val old = state.value.editor
+        val endpointChanged = old.host != editor.host || old.port != editor.port || old.protocol != editor.protocol
+        mutableState.value = state.value.edited(if (endpointChanged) editor.copy(certificateFingerprint = null) else editor)
+    }
+
+    fun approveCertificate() {
+        val fingerprint = state.value.pendingCertificateFingerprint ?: return
+        if (state.value.busy || state.value.editor.tlsValidationMode != TlsValidationMode.PINNED_CERTIFICATE) return
+        edit(state.value.editor.copy(certificateFingerprint = fingerprint))
     }
 
     fun select(account: MailAccount) {
@@ -121,9 +136,10 @@ class AccountSettingsViewModel @JvmOverloads constructor(
         editorSelected = true
         val revision = ++editorRevision
         mutableState.value = state.value.copy(
-            editor = AccountEditor(account.id, account.name, account.protocol, account.host, account.port.toString(), account.username, "", account.enabled, serverDeletePolicy = account.serverDeletePolicy),
+            editor = AccountEditor(account.id, account.name, account.protocol, account.host, account.port.toString(), account.username, "", account.enabled, serverDeletePolicy = account.serverDeletePolicy,
+                tlsValidationMode = account.tlsValidationMode, certificateFingerprint = account.certificateFingerprint),
             credentialLoading = true, saveStatus = AccountOperationStatus.IDLE, testStatus = AccountOperationStatus.IDLE, failureKind = null,
-            formRevision = state.value.formRevision + 1, verifiedRevision = null, savedRevision = null, saveFailure = null,
+            formRevision = state.value.formRevision + 1, verifiedRevision = null, savedRevision = null, saveFailure = null, pendingCertificateFingerprint = null,
         )
         viewModelScope.launch {
             val hasPassword = try {
@@ -154,7 +170,8 @@ class AccountSettingsViewModel @JvmOverloads constructor(
                 check(hasPassword)
                 editorSelected = true
                 if (revision == state.value.formRevision) {
-                    mutableState.value = state.value.copy(editor = AccountEditor(saved.id, saved.name, saved.protocol, saved.host, saved.port.toString(), saved.username, "", saved.enabled, hasPassword, saved.serverDeletePolicy),
+                    mutableState.value = state.value.copy(editor = AccountEditor(saved.id, saved.name, saved.protocol, saved.host, saved.port.toString(), saved.username, "", saved.enabled, hasPassword, saved.serverDeletePolicy,
+                        saved.tlsValidationMode, saved.certificateFingerprint),
                         saveStatus = AccountOperationStatus.SUCCESS, savedRevision = revision)
                 }
             } catch (cancelled: CancellationException) {
@@ -176,11 +193,19 @@ class AccountSettingsViewModel @JvmOverloads constructor(
         val editor = state.value.editor
         val revision = state.value.formRevision
         mutableState.value = state.value.copy(testStatus = AccountOperationStatus.RUNNING, failureKind = null,
-            verifiedRevision = null, savedRevision = null, saveStatus = AccountOperationStatus.IDLE, saveFailure = null)
+            verifiedRevision = null, savedRevision = null, saveStatus = AccountOperationStatus.IDLE, saveFailure = null, pendingCertificateFingerprint = null)
         viewModelScope.launch {
             try {
                 val existing = editor.id?.let { repository.get(it) }
                 val account = accountFrom(editor, existing)
+                if (account.protocol in listOf(MailProtocol.POP3S, MailProtocol.IMAPS) &&
+                    account.tlsValidationMode == TlsValidationMode.PINNED_CERTIFICATE && account.certificateFingerprint == null) {
+                    val fingerprint = inspectCertificate(account)
+                    if (revision == state.value.formRevision) mutableState.value = state.value.copy(
+                        testStatus = AccountOperationStatus.FAILURE, failureKind = MonitoringFailureKind.CERTIFICATE_NOT_APPROVED,
+                        pendingCertificateFingerprint = fingerprint)
+                    return@launch
+                }
                 val password = withContext(Dispatchers.IO) {
                     editor.password.takeIf { it.isNotEmpty() } ?: credentials.load(account.credentialKey)
                 } ?: throw MailReceiverException(MonitoringFailureKind.AUTHENTICATION_FAILURE)
@@ -197,7 +222,14 @@ class AccountSettingsViewModel @JvmOverloads constructor(
                 throw cancelled
             } catch (error: Exception) {
                 if (revision != state.value.formRevision) return@launch
-                mutableState.value = state.value.copy(testStatus = AccountOperationStatus.FAILURE, failureKind = (error as? MailReceiverException)?.failureKind ?: MonitoringFailureKind.SERVER_UNAVAILABLE)
+                val kind = (error as? MailReceiverException)?.failureKind ?: MonitoringFailureKind.SERVER_UNAVAILABLE
+                val candidate = if (kind in listOf(MonitoringFailureKind.CERTIFICATE_CHANGED, MonitoringFailureKind.CERTIFICATE_NOT_APPROVED)) {
+                    try { inspectCertificate(accountFrom(editor, editor.id?.let { repository.get(it) })) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { null }
+                } else null
+                mutableState.value = state.value.copy(testStatus = AccountOperationStatus.FAILURE, failureKind = kind,
+                    pendingCertificateFingerprint = candidate)
             }
         }
     }
@@ -226,6 +258,7 @@ class AccountSettingsViewModel @JvmOverloads constructor(
 
     private fun accountFrom(editor: AccountEditor, existing: MailAccount?): MailAccount {
         val id = editor.id ?: UUID.randomUUID().toString()
-        return MailAccount(id, editor.name.trim(), editor.protocol, editor.host.trim(), editor.port.toInt(), editor.username.trim(), existing?.credentialKey ?: "mail_password_$id", existing?.deleteAfterReceive ?: false, existing?.trustedCertificateId, editor.enabled, editor.serverDeletePolicy)
+        return MailAccount(id, editor.name.trim(), editor.protocol, editor.host.trim(), editor.port.toInt(), editor.username.trim(), existing?.credentialKey ?: "mail_password_$id", existing?.deleteAfterReceive ?: false, existing?.trustedCertificateId, editor.enabled, editor.serverDeletePolicy,
+            editor.tlsValidationMode, editor.certificateFingerprint)
     }
 }

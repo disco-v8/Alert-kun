@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -34,6 +36,8 @@ fun MainScreen(
     onOpenAccount: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    continuousAlarmActive: Boolean = false,
+    onStopAlarm: () -> Unit = {},
 ) {
     val status = if (monitoringState.isMonitoring) {
         stringResource(R.string.monitoring_active_with_interval, pollIntervalMinutes)
@@ -43,7 +47,10 @@ fun MainScreen(
     val lastSuccessfulCheck = monitoringState.lastSuccessfulCheckAtEpochMillis
         ?.let(::formatMonitoringTimestamp)
         ?: stringResource(R.string.not_available)
-    val nextCheckAt = monitoringState.nextScheduledCheckAtEpochMillis
+    val nextCheckAt = if (monitoringState.referenceIntervalMinutes != null &&
+        monitoringState.referenceIntervalMinutes != pollIntervalMinutes) null else
+        nextFcmCheckAt(monitoringState.lastFcmReceivedAtEpochMillis, pollIntervalMinutes,
+            monitoringState.lastGatewayRegistrationAtEpochMillis)
     val nextScheduledCheck = when {
         !monitoringState.isMonitoring -> stringResource(R.string.next_check_none)
         nextCheckAt == null -> stringResource(R.string.next_check_pending)
@@ -62,6 +69,16 @@ fun MainScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            if (continuousAlarmActive) {
+                Text(stringResource(R.string.continuous_alarm_active),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.error)
+                Button(
+                    onClick = onStopAlarm,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).testTag("main_stop_alarm"),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) { Text(stringResource(R.string.stop), style = MaterialTheme.typography.titleLarge) }
+            }
             Text(
                 text = status,
                 modifier = Modifier.testTag("monitoring_status"),

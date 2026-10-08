@@ -14,7 +14,7 @@ import direct.kabu.alertkun.model.VibrationPattern
 import direct.kabu.alertkun.model.ServerDeletePolicy
 
 @Entity(tableName = "accounts")
-data class MailAccountEntity(@PrimaryKey val id: String, val name: String, val protocol: MailProtocol, val host: String, val port: Int, val username: String, val credentialKey: String, val deleteAfterReceive: Boolean, val trustedCertificateId: String?, val enabled: Boolean, @ColumnInfo(defaultValue = "'NEVER'") val serverDeletePolicy: ServerDeletePolicy = ServerDeletePolicy.NEVER)
+data class MailAccountEntity(@PrimaryKey val id: String, val name: String, val protocol: MailProtocol, val host: String, val port: Int, val username: String, val credentialKey: String, val deleteAfterReceive: Boolean, val trustedCertificateId: String?, val enabled: Boolean, @ColumnInfo(defaultValue = "'NEVER'") val serverDeletePolicy: ServerDeletePolicy = ServerDeletePolicy.NEVER, @ColumnInfo(defaultValue = "'STRICT'") val tlsValidationMode: direct.kabu.alertkun.model.TlsValidationMode = direct.kabu.alertkun.model.TlsValidationMode.STRICT, val certificateFingerprint: String? = null)
 
 @Entity(tableName = "rules")
 data class AlertRuleEntity(@PrimaryKey val id: String, val name: String, val searchText: String, val target: RuleTarget, val priority: Int, val soundUri: String?, val vibrationPattern: VibrationPattern, val alarmMode: AlarmMode, val enabled: Boolean, @ColumnInfo(defaultValue = "'DEFAULT'") val backgroundColor: MailBackgroundColor = MailBackgroundColor.DEFAULT, @ColumnInfo(defaultValue = "'ALARM'") val soundType: AlarmSoundType = AlarmSoundType.ALARM)

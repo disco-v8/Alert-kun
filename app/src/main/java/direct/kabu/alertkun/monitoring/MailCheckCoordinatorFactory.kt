@@ -17,11 +17,14 @@ import direct.kabu.alertkun.security.AndroidKeystoreCredentialStore
 import kotlinx.coroutines.flow.first
 
 internal object MailCheckCoordinatorFactory {
-    suspend fun create(context: Context): MailCheckCoordinator {
+    suspend fun create(context: Context, network: NetworkStabilization): MailCheckCoordinator {
         val database = AlertKunDatabase.getInstance(context)
         val mails = MailRepository(database.receivedMailDao())
         val accounts = AccountRepository(database.accountDao()).accounts.first().filter { it.enabled }
-        val receiver = if (accounts.isEmpty()) DummyMailReceiver.instance else AccountMailReceiver(accounts, AndroidKeystoreCredentialStore(context))
+        val receiver = NetworkStabilizingMailReceiver(if (accounts.isEmpty()) DummyMailReceiver.instance else AccountMailReceiver(accounts, AndroidKeystoreCredentialStore(context)) {
+            monitoringDebugLog(context, it)
+        }, network, accounts.any { it.protocol in listOf(direct.kabu.alertkun.model.MailProtocol.POP3, direct.kabu.alertkun.model.MailProtocol.POP3S)
+            && it.serverDeletePolicy != direct.kabu.alertkun.model.ServerDeletePolicy.NEVER })
         return MailCheckCoordinator(
             mailStore = object : MonitoringMailStore {
                 override suspend fun finalizeBatch(outcomes: List<direct.kabu.alertkun.model.MailProcessingOutcome>) {
@@ -58,7 +61,13 @@ internal object MailCheckCoordinatorFactory {
                     }
                 }
             },
-            alarmSink = object : MonitoringAlarmSink { override fun start(event: AlarmEvent) { AlarmController.getInstance(context).start(event) } },
+            alarmSink = object : MonitoringAlarmSink {
+                override fun start(event: AlarmEvent) {
+                    monitoringDebugLog(context, "alarm handoff start mailId=${event.mailId} ruleId=${event.ruleId}")
+                    AlarmController.getInstance(context).start(event)
+                    monitoringDebugLog(context, "alarm handoff accepted mailId=${event.mailId} ruleId=${event.ruleId}")
+                }
+            },
         )
     }
 }

@@ -14,13 +14,19 @@ import direct.kabu.alertkun.data.entity.AlertRuleEntity
 import direct.kabu.alertkun.data.entity.MailAccountEntity
 import direct.kabu.alertkun.data.entity.ReceivedMailEntity
 
-@Database(entities = [MailAccountEntity::class, AlertRuleEntity::class, ReceivedMailEntity::class], version = 4, exportSchema = true)
+@Database(entities = [MailAccountEntity::class, AlertRuleEntity::class, ReceivedMailEntity::class], version = 5, exportSchema = true)
 @TypeConverters(Converters::class)
 abstract class AlertKunDatabase : RoomDatabase() {
     abstract fun accountDao(): AccountDao
     abstract fun ruleDao(): RuleDao
     abstract fun receivedMailDao(): ReceivedMailDao
     companion object {
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE accounts ADD COLUMN tlsValidationMode TEXT NOT NULL DEFAULT 'STRICT'")
+                db.execSQL("ALTER TABLE accounts ADD COLUMN certificateFingerprint TEXT")
+            }
+        }
         val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE accounts ADD COLUMN serverDeletePolicy TEXT NOT NULL DEFAULT 'NEVER'")
@@ -40,7 +46,7 @@ abstract class AlertKunDatabase : RoomDatabase() {
         @Volatile private var instance: AlertKunDatabase? = null
         fun getInstance(context: Context): AlertKunDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AlertKunDatabase::class.java, "alertkun.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
         }
     }
 }

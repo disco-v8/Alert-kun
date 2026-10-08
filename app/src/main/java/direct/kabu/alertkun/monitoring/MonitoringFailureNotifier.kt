@@ -11,9 +11,10 @@ import java.util.Date
 import java.util.Locale
 
 internal class MonitoringFailureNotifier(private val context: Context) {
-    fun post(failureThreshold: Int, failedAtEpochMillis: Long) {
+    fun post(failureThreshold: Int, failedAtEpochMillis: Long, kind: MonitoringFailureKind? = null) {
         val timestamp = SimpleDateFormat("yyyy/MM/dd HH:mm:ss", Locale.getDefault()).format(Date(failedAtEpochMillis))
-        val message = context.getString(R.string.monitoring_failure_message, failureThreshold, timestamp)
+        val message = context.getString(R.string.monitoring_failure_message, failureThreshold, timestamp) +
+            if (kind == MonitoringFailureKind.CERTIFICATE_CHANGED) "\n" + context.getString(R.string.tls_certificate_changed) else ""
         val manager = context.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, context.getString(R.string.monitoring_failure_channel_name), NotificationManager.IMPORTANCE_HIGH))
@@ -24,6 +25,7 @@ internal class MonitoringFailureNotifier(private val context: Context) {
                 .setContentText(message)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message))
                 .setWhen(failedAtEpochMillis).setAutoCancel(true).build())
+            monitoringDebugLog(context, "failure notification posted failedMs=$failedAtEpochMillis")
         } catch (_: SecurityException) {
             // Notification permission denial must not interrupt durable failure accounting.
         }

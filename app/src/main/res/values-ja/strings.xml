@@ -1,15 +1,16 @@
 <resources>
+    <string name="continuous_alarm_active">継続警報が作動中です</string>
     <string name="alarm_sound_type">警報音種別</string>
     <string name="alarm_sound_type_alarm">アラーム</string>
     <string name="alarm_sound_type_notification">通知</string>
     <string name="alarm_sound_type_ringtone">着信</string>
     <string name="alarm_sound_default_notification">標準通知音</string>
     <string name="alarm_sound_default_ringtone">標準着信音</string>
-    <string name="app_name">アラートくん</string><string name="back">戻る</string><string name="settings">設定</string><string name="languages">言語</string><string name="english">英語</string><string name="japanese">日本語</string><string name="main_title">アラートくん</string><string name="monitoring_active">監視中</string><string name="monitoring_active_with_interval">監視中（%1$d分毎）</string><string name="monitoring_stopped">監視停止中</string><string name="not_available">未確認</string><string name="received_mail">受信メール</string><string name="account_settings">アカウント設定</string><string name="rule_settings">ルール設定</string><string name="no_received_mail">受信メールはありません</string><string name="account_settings_not_available">アカウント設定はまだ利用できません。</string><string name="create_rule">ルール作成</string><string name="edit_rule">ルール編集</string><string name="copy_rule">コピー</string><string name="add_rule">ルール追加</string><string name="name">名前</string><string name="search_text">検索文字列</string><string name="search_target">検索対象</string><string name="priority">優先順位（小さいほど高優先）</string><string name="vibration">バイブレーション</string><string name="alarm_count">アラーム回数</string><string name="enabled">有効</string><string name="save">保存</string><string name="cancel">キャンセル</string><string name="delete">削除</string><string name="delete_rule_title">ルールを削除しますか？</string><string name="delete_rule_message">%1$s を削除します。</string><string name="no_rules">ルールはありません</string><string name="sound_later">音の選択は後のフェーズで対応します。</string><string name="validation_name">名前を入力してください</string><string name="validation_search">検索文字列を入力してください</string><string name="validation_priority">優先順位は1以上にしてください</string><string name="developer_tools">開発者ツール</string><string name="manual_alarm_note">以下はアラーム確認用です。</string><string name="test_alarm">アラームをテスト</string><string name="stop_test_alarm">テストアラームを停止</string><string name="target_subject">件名</string><string name="target_body">本文</string><string name="target_subject_and_body">件名と本文</string><string name="alarm_once">1回</string><string name="alarm_until_stopped">停止まで継続</string><string name="vibration_none">なし</string><string name="vibration_pattern_1">パターン1</string><string name="vibration_pattern_2">パターン2</string><string name="vibration_pattern_3">パターン3</string>
+    <string name="app_name">アラートくん</string><string name="back">戻る</string><string name="settings">設定</string><string name="languages">言語</string><string name="english">英語</string><string name="japanese">日本語</string><string name="main_title">アラートくん</string><string name="monitoring_active">監視中</string><string name="monitoring_active_with_interval">監視中（%1$d分毎）</string><string name="monitoring_stopped">監視停止中</string><string name="not_available">未確認</string><string name="received_mail">受信メール</string><string name="account_settings">アカウント設定</string><string name="rule_settings">ルール設定</string><string name="no_received_mail">受信メールはありません</string><string name="account_settings_not_available">アカウント設定はまだ利用できません。</string><string name="create_rule">ルール作成</string><string name="edit_rule">ルール編集</string><string name="copy_rule">コピー</string><string name="add_rule">ルール追加</string><string name="name">名前</string><string name="search_text">検索文字列</string><string name="search_target">検索対象</string><string name="priority">優先順位（小さいほど高優先）</string><string name="vibration">バイブレーション</string><string name="alarm_count">アラーム回数</string><string name="enabled">有効</string><string name="save">保存</string><string name="cancel">キャンセル</string><string name="delete">削除</string><string name="delete_rule_title">ルールを削除しますか？</string><string name="delete_rule_message">%1$s を削除します。</string><string name="no_rules">ルールはありません</string><string name="sound_later">音の選択は後のフェーズで対応します。</string><string name="validation_name">名前を入力してください</string><string name="validation_search">検索文字列を入力してください</string><string name="validation_priority">優先順位は1以上にしてください</string><string name="developer_tools">確認ツール</string><string name="test_alarm">アラームをテスト</string><string name="stop_test_alarm">テストアラームを停止</string><string name="target_subject">件名</string><string name="target_body">本文</string><string name="target_subject_and_body">件名と本文</string><string name="alarm_once">1回</string><string name="alarm_until_stopped">停止まで継続</string><string name="vibration_none">なし</string><string name="vibration_pattern_1">パターン1</string><string name="vibration_pattern_2">パターン2</string><string name="vibration_pattern_3">パターン3</string>
     <string name="last_check">最終確認：%1$s</string>
-    <string name="next_scheduled_check">次回バックアップ：%1$s頃</string>
-    <string name="next_check_pending">次回バックアップ：未定</string>
-    <string name="next_check_none">次回バックアップ：なし</string>
+    <string name="next_scheduled_check">次回確認：%1$s頃</string>
+    <string name="next_check_pending">次回確認：未定</string>
+    <string name="next_check_none">次回確認：なし</string>
     <string name="alarm_notification_title">アラートくん: %1$s</string>
     <string name="alarm_no_subject">(件名なし)</string>
     <string name="alarm_channel_name">アラートくん アラーム</string>
@@ -111,13 +112,32 @@
     <string name="server_delete_never">削除しない</string>
     <string name="server_delete_immediately_hint">受信・処理完了後、サーバー上のメールを削除します。</string>
     <string name="server_delete_pop3_only">サーバー削除はPOP3/POP3Sのみ対応しています。IMAPのメールは削除しません。</string>
-    <string name="mydns_settings">MyDNS.JP / Push登録設定</string>
+    <string name="mydns_settings">MyDNS.JPユーザー情報</string>
+    <string name="mydns_save_settings">MyDNS.JP設定を保存</string>
     <string name="mydns_master_id">MyDNS.JP MasterID</string>
     <string name="mydns_master_password">MyDNS.JP MasterPwd</string>
-    <string name="mydns_settings_note">MasterIDはGatewayへの端末登録に利用します。MasterPwdは将来の利用に備えて安全に保存します。MyDNS.JP認証とPush受信によるメール確認は未実装です。</string>
-    <string name="mydns_password_saved">パスワードは保存済みです。変更する場合のみ入力してください。</string>
-    <string name="mydns_password_not_saved">保存済みパスワードはありません。</string>
-    <string name="mydns_saved">設定を保存しました。Gateway登録は別途行われます。</string>
+    <string name="mydns_settings_note">MyDNS.JP利用者向けの監視アプリです。ご利用のMasterIDとMasterPwdを設定してください。</string>
+    <string name="mydns_saved">設定を保存しました。</string>
     <string name="mydns_save_failed">設定を読み込みまたは保存できませんでした。入力内容は保持しています。再度お試しください。</string>
     <string name="mydns_rollback_failed">保存に失敗し、元の設定を完全に復元できませんでした。設定を確認して再度保存してください。</string>
+    <string name="monitoring_health_enabled">異常がなくても一日一回通知</string>
+    <string name="monitoring_health_channel_name">監視ヘルス</string>
+    <string name="monitoring_health_title">監視ステータス</string>
+    <string name="monitoring_health_message">過去24時間、監視は正常です\n異常検出：%1$d件\n最終メール確認：%2$s</string>
+    <string name="tls_validation">TLS証明書の検証</string>
+    <string name="tls_strict">厳密に検証する（推奨）</string>
+    <string name="tls_hostname">ホスト名の不一致を許可する</string>
+    <string name="tls_pinned">自己署名証明書を許可する</string>
+    <string name="tls_strict_description">証明書と接続先ホスト名の両方を検証します。</string>
+    <string name="tls_hostname_description">証明書自体は検証しますが、接続先ホスト名との一致は要求しません。</string>
+    <string name="tls_pinned_description">自己署名証明書を使用できます。初回接続時に証明書の確認が必要です。</string>
+    <string name="tls_strict_recommended">通常は「厳密に検証する」を使用してください。</string>
+    <string name="tls_fingerprint">SHA-256:\n%1$s</string>
+    <string name="tls_verify_fingerprint">サーバー管理者が確認したフィンガープリントと一致することを確認してください。承認後、接続テストと保存を行ってください。</string>
+    <string name="tls_trust_certificate">この証明書を信頼する</string>
+    <string name="tls_ca_failed">証明書を信頼済みCAまで検証できませんでした。</string>
+    <string name="tls_expired">証明書の有効期間外です。</string>
+    <string name="tls_hostname_failed">証明書と接続先ホスト名が一致しません。</string>
+    <string name="tls_not_approved">自己署名証明書がまだ承認されていません。</string>
+    <string name="tls_certificate_changed">メールサーバーの証明書が変更されました。再確認・再承認してください。</string>
 </resources>

@@ -20,6 +20,10 @@ data class MainMonitoringUiState(
 
 /** Observes durable Worker updates rather than relying only on process-local state. */
 class MainMonitoringViewModel(application: Application) : AndroidViewModel(application) {
+    private val alarmController = direct.kabu.alertkun.alarm.AlarmController.getInstance(application)
+    val alarmSession = alarmController.session
+    fun stopAlarm() { alarmController.stop("main UI") }
+
     val state = combine(
         MonitoringStatusRepository(application).state,
         SettingsRepository(application).settings,

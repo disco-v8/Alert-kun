@@ -10,8 +10,8 @@ import jakarta.mail.Folder
 import jakarta.mail.Message
 import org.eclipse.angus.mail.pop3.POP3Folder
 
-class Pop3MailReceiver(account: MailAccount, password: String) : JakartaMailReceiver(account, password) {
-    private val deletion = Pop3ServerDeletion(account, password)
+class Pop3MailReceiver(account: MailAccount, password: String, trace: (String) -> Unit = {}) : JakartaMailReceiver(account, password) {
+    private val deletion = Pop3ServerDeletion(account, password, trace)
 
     override suspend fun deleteProcessedMessages(lookup: suspend (String, String) -> ReceivedMail?, now: Long) =
         deletion.deleteProcessed(lookup, now)

@@ -9,8 +9,8 @@ import java.util.Collections
 import kotlin.concurrent.thread
 
 /** Real TCP, disposable test mailbox. No production credentials or external server is used. */
-class Pop3TestServer(uidls: List<String> = listOf("test-uid-1")) : AutoCloseable {
-    private val listener = ServerSocket(0)
+class Pop3TestServer(uidls: List<String> = listOf("test-uid-1"), socketFactory: javax.net.ServerSocketFactory? = null) : AutoCloseable {
+    private val listener = socketFactory?.createServerSocket(0) ?: ServerSocket(0)
     private val connections = Collections.synchronizedList(mutableListOf<Socket>())
     private val messages = uidls.toMutableList()
     val commands = Collections.synchronizedList(mutableListOf<String>())

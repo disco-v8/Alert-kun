@@ -29,6 +29,7 @@ fun AlertKunApp(openMailRequest: Int = 0) {
     val navController = rememberNavController()
     val monitoringViewModel: MainMonitoringViewModel = viewModel()
     val monitoring by monitoringViewModel.state.collectAsStateWithLifecycle()
+    val alarmSession by monitoringViewModel.alarmSession.collectAsStateWithLifecycle()
 
     NavHost(
         navController = navController,
@@ -43,6 +44,8 @@ fun AlertKunApp(openMailRequest: Int = 0) {
                 onOpenRules = { navController.navigate(AlertKunRoute.Rules) },
                 onOpenAccount = { navController.navigate(AlertKunRoute.Account) },
                 onOpenSettings = { navController.navigate(AlertKunRoute.Settings) },
+                continuousAlarmActive = alarmSession != null,
+                onStopAlarm = monitoringViewModel::stopAlarm,
             )
         }
         composable(AlertKunRoute.ReceivedMail) {

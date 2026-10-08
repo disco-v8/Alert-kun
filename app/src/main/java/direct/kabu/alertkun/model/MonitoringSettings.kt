@@ -6,4 +6,5 @@ data class MonitoringSettings(
     val consecutiveFailureThreshold: Int = 3,
     val monitoringEnabled: Boolean = false,
     val checkImmediatelyOnAppStart: Boolean = true,
+    val healthNotificationEnabled: Boolean = true,
 )

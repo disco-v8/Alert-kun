@@ -6,4 +6,7 @@ data class MonitoringState(
     val lastSuccessfulCheckAtEpochMillis: Long?,
     val nextScheduledCheckAtEpochMillis: Long?,
     val consecutiveFailureCount: Int,
+    val lastFcmReceivedAtEpochMillis: Long? = null,
+    val lastGatewayRegistrationAtEpochMillis: Long? = null,
+    val referenceIntervalMinutes: Int? = null,
 )

@@ -14,6 +14,8 @@ import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 
 class Converters {
+    @TypeConverter fun fromTlsValidationMode(value: direct.kabu.alertkun.model.TlsValidationMode) = value.name
+    @TypeConverter fun toTlsValidationMode(value: String) = direct.kabu.alertkun.model.TlsValidationMode.entries.firstOrNull { it.name == value } ?: direct.kabu.alertkun.model.TlsValidationMode.STRICT
     @TypeConverter fun fromServerDeletePolicy(value: ServerDeletePolicy) = value.name
     @TypeConverter fun toServerDeletePolicy(value: String) = ServerDeletePolicy.entries.firstOrNull { it.name == value } ?: ServerDeletePolicy.NEVER
     @TypeConverter fun fromSoundType(value: AlarmSoundType) = value.name

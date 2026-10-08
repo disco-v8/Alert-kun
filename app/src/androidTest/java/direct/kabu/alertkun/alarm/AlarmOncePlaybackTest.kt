@@ -33,6 +33,7 @@ class AlarmOncePlaybackTest {
     private val fixture = File(context.cacheDir, "alarm-once-test.wav")
 
     @Before fun prepare() {
+        assertNull("Do not replace an existing live alarm", controller.pendingToken())
         shell("pm grant ${context.packageName} ${Manifest.permission.POST_NOTIFICATIONS}")
         if (Build.VERSION.SDK_INT >= 31) shell("appops set ${context.packageName} SCHEDULE_EXACT_ALARM allow")
         controller.stop()
@@ -47,7 +48,8 @@ class AlarmOncePlaybackTest {
     }
 
     @After fun cleanup() {
-        controller.stop()
+        val current = PendingAlarmStore(context).load()?.event?.mailId
+        if (current == null || current == "playback-test" || current.startsWith("continuous-")) controller.stop()
         fixture.delete()
     }
 
@@ -76,7 +78,7 @@ class AlarmOncePlaybackTest {
             assertThrows(IllegalStateException::class.java) { once.start() }
         }
         for (type in AlarmSoundType.entries) {
-            controller.start(event(AlarmMode.UNTIL_STOPPED).copy(soundType = type))
+            controller.start(event(AlarmMode.UNTIL_STOPPED).copy(mailId = "continuous-$type", soundType = type))
             await(90_000) { controller.currentState() == AlarmState.ACTIVE && player() != null }
             val continuous = player()!!
             assertEquals(type, PendingAlarmStore(context).load()!!.event.soundType)
@@ -85,7 +87,7 @@ class AlarmOncePlaybackTest {
             if (Build.VERSION.SDK_INT >= 26) {
                 val focus = AlarmController::class.java.getDeclaredField("focusRequest")
                     .apply { isAccessible = true }.get(controller) as AudioFocusRequest
-                assertEquals(AlarmSoundMapping.usage(type), focus.audioAttributes.usage)
+                assertEquals(android.media.AudioAttributes.USAGE_ALARM, focus.audioAttributes.usage)
             }
             SystemClock.sleep(1_300)
             assertSame(continuous, player())
@@ -119,7 +121,7 @@ class AlarmOncePlaybackTest {
     }
 
     private fun assertPlaybackUsage(playing: MediaPlayer, type: AlarmSoundType, mode: AlarmMode) {
-        val expected = when (type) {
+        val expected = if (mode == AlarmMode.UNTIL_STOPPED) "USAGE_ALARM" else when (type) {
             AlarmSoundType.ALARM -> "USAGE_ALARM"
             AlarmSoundType.NOTIFICATION -> "USAGE_NOTIFICATION"
             AlarmSoundType.RINGTONE -> "USAGE_NOTIFICATION_RINGTONE"

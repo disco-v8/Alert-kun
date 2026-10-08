@@ -20,7 +20,7 @@ class AlarmSoundTypeMigrationTest {
         val name = "sound-migration-${UUID.randomUUID()}.db"
         var database: AlertKunDatabase? = null
         fun open() = Room.databaseBuilder(context, AlertKunDatabase::class.java, name)
-            .addMigrations(AlertKunDatabase.MIGRATION_1_2, AlertKunDatabase.MIGRATION_2_3, AlertKunDatabase.MIGRATION_3_4).build()
+            .addMigrations(AlertKunDatabase.MIGRATION_1_2, AlertKunDatabase.MIGRATION_2_3, AlertKunDatabase.MIGRATION_3_4, AlertKunDatabase.MIGRATION_4_5).build()
         try {
             // v2 definitions from the exported schema, including both background snapshots.
             context.openOrCreateDatabase(name, Context.MODE_PRIVATE, null).use { db ->

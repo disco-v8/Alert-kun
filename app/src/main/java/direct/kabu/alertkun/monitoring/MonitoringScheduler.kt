@@ -91,12 +91,12 @@ object MonitoringScheduler {
 
     fun runNow(context: Context, trigger: MailCheckTrigger = MailCheckTrigger.MANUAL): androidx.work.Operation {
         require(trigger == MailCheckTrigger.MANUAL || trigger == MailCheckTrigger.FCM)
-        monitoringDebugLog(context, "runNow enqueue trigger=$trigger")
         // A manual check must never swallow an FCM request and misattribute its result.
         val name = if (trigger == MailCheckTrigger.FCM) FCM_WORK_NAME else NOW_WORK_NAME
-        return WorkManager.getInstance(context).enqueueUniqueWork(name, ExistingWorkPolicy.KEEP,
-            OneTimeWorkRequestBuilder<MailCheckWorker>().addTag("mail_check_${trigger.name}").setInputData(
-                workDataOf(KEY_SCHEDULED to false, KEY_TRIGGER to trigger.name)).build())
+        val request = OneTimeWorkRequestBuilder<MailCheckWorker>().addTag("mail_check_${trigger.name}").setInputData(
+            workDataOf(KEY_SCHEDULED to false, KEY_TRIGGER to trigger.name)).build()
+        monitoringDebugLog(context, "runNow enqueue trigger=$trigger id=${request.id}")
+        return WorkManager.getInstance(context).enqueueUniqueWork(name, ExistingWorkPolicy.KEEP, request)
     }
 
     internal suspend fun enqueueRebasedScheduleIfCurrent(context: Context, targetAtEpochMillis: Long, generation: Long, intervalMinutes: Int): Boolean = scheduleMutationMutex.withLock {

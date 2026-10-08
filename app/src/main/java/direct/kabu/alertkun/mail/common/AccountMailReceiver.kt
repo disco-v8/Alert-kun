@@ -13,6 +13,7 @@ import direct.kabu.alertkun.security.CredentialStore
 class AccountMailReceiver(
     accounts: List<MailAccount>,
     private val credentialStore: CredentialStore,
+    private val trace: (String) -> Unit = {},
 ) : MailReceiver {
     private val accountsById = accounts.filter { it.enabled }.associateBy { it.id }
 
@@ -37,7 +38,7 @@ class AccountMailReceiver(
         val password = credentialStore.load(account.credentialKey)
             ?: throw MailReceiverException(MonitoringFailureKind.AUTHENTICATION_FAILURE)
         return when (account.protocol) {
-            MailProtocol.POP3, MailProtocol.POP3S -> Pop3MailReceiver(account, password)
+            MailProtocol.POP3, MailProtocol.POP3S -> Pop3MailReceiver(account, password, trace)
             MailProtocol.IMAP4, MailProtocol.IMAPS -> ImapMailReceiver(account, password)
         }
     }

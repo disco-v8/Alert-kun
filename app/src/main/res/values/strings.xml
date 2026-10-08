@@ -1,4 +1,5 @@
 <resources>
+    <string name="continuous_alarm_active">Alarm is sounding</string>
     <string name="alarm_sound_type">Sound type</string>
     <string name="alarm_sound_type_alarm">Alarm</string>
     <string name="alarm_sound_type_notification">Notification</string>
@@ -11,12 +12,12 @@
     <string name="received_mail">Received Mail</string><string name="account_settings">Account Settings</string><string name="rule_settings">Rule Settings</string><string name="no_received_mail">No received mail</string><string name="account_settings_not_available">Account settings are not available yet.</string>
     <string name="create_rule">Create Rule</string><string name="edit_rule">Edit Rule</string><string name="copy_rule">Copy Rule</string><string name="add_rule">Add Rule</string><string name="name">Name</string><string name="search_text">Search text</string><string name="search_target">Search target</string><string name="priority">Priority (smaller is higher)</string><string name="vibration">Vibration</string><string name="alarm_count">Alarm count</string><string name="enabled">Enabled</string><string name="save">Save</string><string name="cancel">Cancel</string><string name="delete">Delete</string><string name="delete_rule_title">Delete rule?</string><string name="delete_rule_message">%1$s will be deleted.</string><string name="no_rules">No rules yet</string><string name="sound_later">Sound selection is available in a later phase.</string>
     <string name="validation_name">Name is required</string><string name="validation_search">Search text is required</string><string name="validation_priority">Priority must be at least 1</string>
-    <string name="developer_tools">Developer tools</string><string name="manual_alarm_note">The following controls are for alarm testing.</string><string name="test_alarm">Test alarm</string><string name="stop_test_alarm">Stop test alarm</string>
+    <string name="developer_tools">Verification tools</string><string name="test_alarm">Test alarm</string><string name="stop_test_alarm">Stop test alarm</string>
     <string name="target_subject">Subject</string><string name="target_body">Body</string><string name="target_subject_and_body">Subject and body</string><string name="alarm_once">Once</string><string name="alarm_until_stopped">Until stopped</string><string name="vibration_none">None</string><string name="vibration_pattern_1">Pattern 1</string><string name="vibration_pattern_2">Pattern 2</string><string name="vibration_pattern_3">Pattern 3</string>
     <string name="last_check">Last check: %1$s</string>
-    <string name="next_scheduled_check">Next backup: around %1$s</string>
-    <string name="next_check_pending">Next backup: not yet scheduled</string>
-    <string name="next_check_none">Next backup: none</string>
+    <string name="next_scheduled_check">Next check: around %1$s</string>
+    <string name="next_check_pending">Next check: pending</string>
+    <string name="next_check_none">Next check: none</string>
     <string name="alarm_notification_title">Alert-kun: %1$s</string>
     <string name="alarm_no_subject">(No subject)</string>
     <string name="alarm_channel_name">AlertKun alarms</string>
@@ -118,13 +119,32 @@
     <string name="server_delete_never">Never</string>
     <string name="server_delete_immediately_hint">Mail is deleted from the server after receiving and processing successfully.</string>
     <string name="server_delete_pop3_only">Server deletion is supported for POP3/POP3S only. IMAP mail is retained.</string>
-    <string name="mydns_settings">MyDNS.JP / Push registration</string>
+    <string name="mydns_settings">MyDNS.JP user information</string>
+    <string name="mydns_save_settings">Save MyDNS.JP settings</string>
     <string name="mydns_master_id">MyDNS.JP MasterID</string>
     <string name="mydns_master_password">MyDNS.JP MasterPwd</string>
-    <string name="mydns_settings_note">MasterID is used to register this device with the Gateway. MasterPwd is stored securely for future use. MyDNS.JP authentication and mail checks triggered by push messages are not implemented.</string>
-    <string name="mydns_password_saved">A password is saved. Enter a new password only to change it.</string>
-    <string name="mydns_password_not_saved">No password is saved.</string>
-    <string name="mydns_saved">Settings saved. Gateway registration runs separately.</string>
+    <string name="mydns_settings_note">This monitoring app is for MyDNS.JP users. Please set your MasterID and MasterPwd.</string>
+    <string name="mydns_saved">Settings saved.</string>
     <string name="mydns_save_failed">Unable to load or save settings. Please try again; entered values have been kept.</string>
     <string name="mydns_rollback_failed">Saving failed and the previous settings could not be fully restored. Check the settings and save again.</string>
+    <string name="monitoring_health_enabled">Notify once a day even when there are no alerts</string>
+    <string name="monitoring_health_channel_name">Monitoring health</string>
+    <string name="monitoring_health_title">Monitoring status</string>
+    <string name="monitoring_health_message">Monitoring has been healthy for the past 24 hours\nAlerts detected: %1$d\nLast successful mail check: %2$s</string>
+    <string name="tls_validation">TLS certificate validation</string>
+    <string name="tls_strict">Strict validation (recommended)</string>
+    <string name="tls_hostname">Allow hostname mismatch</string>
+    <string name="tls_pinned">Allow self-signed certificate</string>
+    <string name="tls_strict_description">Validates both the certificate and the connection hostname.</string>
+    <string name="tls_hostname_description">Validates the certificate without requiring the connection hostname to match.</string>
+    <string name="tls_pinned_description">Allows self-signed certificates after explicit certificate approval.</string>
+    <string name="tls_strict_recommended">Use strict validation for normal operation.</string>
+    <string name="tls_fingerprint">SHA-256:\n%1$s</string>
+    <string name="tls_verify_fingerprint">Compare this fingerprint with one verified by the server administrator. After approval, test the connection and save.</string>
+    <string name="tls_trust_certificate">Trust this certificate</string>
+    <string name="tls_ca_failed">The certificate could not be validated against a trusted CA.</string>
+    <string name="tls_expired">The certificate is outside its validity period.</string>
+    <string name="tls_hostname_failed">The certificate does not match the connection hostname.</string>
+    <string name="tls_not_approved">The self-signed certificate has not been approved.</string>
+    <string name="tls_certificate_changed">The mail server certificate has changed. Review and approve it again.</string>
 </resources>

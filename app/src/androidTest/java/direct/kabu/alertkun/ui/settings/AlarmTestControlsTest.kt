@@ -1,6 +1,10 @@
 package direct.kabu.alertkun.ui.settings
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -23,17 +27,28 @@ import org.junit.Test
 class AlarmTestControlsTest {
     @get:Rule val composeRule = createComposeRule()
 
-    @Test fun settingsSeparatesTestingAndUsesShortLocalizedExplanationAndPatternDropdown() {
+    @Test fun settingsShowsStartupCheckboxAndVerificationToolsWithoutAlarmNote() {
         val context = ApplicationProvider.getApplicationContext<Application>()
         fun localized(locale: java.util.Locale) = context.createConfigurationContext(
             android.content.res.Configuration(context.resources.configuration).apply { setLocale(locale) })
-            .getString(R.string.manual_alarm_note)
-        assertEquals("以下はアラーム確認用です。", localized(java.util.Locale.JAPANESE))
-        assertEquals("The following controls are for alarm testing.", localized(java.util.Locale.ENGLISH))
+            .getString(R.string.developer_tools)
+        assertEquals("確認ツール", localized(java.util.Locale.JAPANESE))
+        assertEquals("Verification tools", localized(java.util.Locale.ENGLISH))
+        composeRule.setContent { OtherSettingsScreen({}) }
+        composeRule.onNodeWithTag("check_immediately_on_app_start").performScrollTo().assertIsDisplayed()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox))
+        composeRule.onNodeWithTag("monitoring_health_notification").performScrollTo()
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox))
+        composeRule.onNodeWithTag("developer_tools").performScrollTo().assertIsDisplayed()
+            .assertTextEquals(context.getString(R.string.developer_tools))
+        composeRule.onNodeWithTag("alarm_test_note").assertDoesNotExist()
+    }
+
+    @Test fun settingsSeparatesTestingAndUsesPatternDropdownWithoutAlarmNote() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
         composeRule.setContent { OtherSettingsScreen({}) }
         composeRule.onNodeWithTag("alarm_test_divider").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithTag("alarm_test_note").performScrollTo()
-            .assertIsDisplayed().assertTextEquals(context.getString(R.string.manual_alarm_note))
+        composeRule.onNodeWithTag("alarm_test_note").assertDoesNotExist()
         for (pattern in direct.kabu.alertkun.model.VibrationPattern.entries) {
             val item = "alarm_test_vibration_${pattern.name}"
             composeRule.onNodeWithTag(item).assertDoesNotExist()

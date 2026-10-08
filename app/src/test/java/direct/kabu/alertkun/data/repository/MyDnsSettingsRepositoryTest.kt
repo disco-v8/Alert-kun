@@ -1,0 +1,72 @@
+package direct.kabu.alertkun.data.repository
+
+import direct.kabu.alertkun.security.CredentialStore
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.*
+import org.junit.Test
+
+class MyDnsSettingsRepositoryTest {
+    @Test fun savesAndReloadsIdWithoutPuttingPasswordInSettings() = runBlocking {
+        var normalSetting = ""
+        val credentials = MemoryCredentials()
+        val repository = MyDnsSettingsRepository(credentials, { normalSetting }, { normalSetting = it })
+        repository.save("  test-master  ", "private-password")
+        assertEquals("test-master", normalSetting)
+        assertEquals(MyDnsSavedSettings("test-master", true), repository.read())
+        assertEquals(mapOf(MyDnsSettingsRepository.CREDENTIAL_KEY to "private-password"), credentials.values)
+        assertFalse(normalSetting.contains("private-password"))
+    }
+
+    @Test fun emptyPasswordPreservesSavedValueAndNewInputReplacesIt() = runBlocking {
+        var id = ""
+        val credentials = MemoryCredentials()
+        val repository = MyDnsSettingsRepository(credentials, { id }, { id = it })
+        repository.save("one", "first")
+        repository.save("two", "")
+        assertEquals("first", credentials.load(MyDnsSettingsRepository.CREDENTIAL_KEY))
+        repository.save("two", "second")
+        assertEquals("second", credentials.load(MyDnsSettingsRepository.CREDENTIAL_KEY))
+        repository.save("", "")
+        assertEquals(MyDnsSavedSettings("", true), repository.read())
+    }
+
+    @Test fun settingsFailureRestoresPreviousCredential() = runBlocking {
+        val credentials = MemoryCredentials()
+        credentials.save(MyDnsSettingsRepository.CREDENTIAL_KEY, "old")
+        val repository = MyDnsSettingsRepository(credentials, { "old-id" }, {
+            if (it != "old-id") error("Storage failed")
+        })
+        try { repository.save("new-id", "new"); fail("Expected failure") }
+        catch (error: MyDnsSaveException) { assertEquals(MyDnsSaveFailure.STORAGE, error.kind) }
+        assertEquals("old", credentials.load(MyDnsSettingsRepository.CREDENTIAL_KEY))
+    }
+
+    @Test fun failedVerificationNeverPublishesNewId() = runBlocking {
+        var id = "old-id"
+        val credentials = object : CredentialStore {
+            override fun load(key: String) = "old"
+            override fun save(key: String, password: String) = Unit
+            override fun delete(key: String) = Unit
+        }
+        try { MyDnsSettingsRepository(credentials, { id }, { id = it }).save("new-id", "new"); fail("Expected failure") }
+        catch (error: MyDnsSaveException) { assertEquals(MyDnsSaveFailure.STORAGE, error.kind) }
+        assertEquals("old-id", id)
+    }
+
+    @Test fun failedCompensationIsReported() = runBlocking {
+        val credentials = object : CredentialStore {
+            override fun load(key: String) = "old"
+            override fun save(key: String, password: String) { error("Cannot persist") }
+            override fun delete(key: String) = Unit
+        }
+        try { MyDnsSettingsRepository(credentials, { "old-id" }, {}).save("new-id", "new"); fail("Expected failure") }
+        catch (error: MyDnsSaveException) { assertEquals(MyDnsSaveFailure.ROLLBACK, error.kind) }
+    }
+
+    private class MemoryCredentials : CredentialStore {
+        val values = mutableMapOf<String, String>()
+        override fun save(key: String, password: String) { values[key] = password }
+        override fun load(key: String) = values[key]
+        override fun delete(key: String) { values.remove(key) }
+    }
+}

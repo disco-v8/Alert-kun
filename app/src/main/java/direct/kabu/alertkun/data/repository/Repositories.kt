@@ -11,6 +11,7 @@ import direct.kabu.alertkun.data.dao.RuleDao
 import direct.kabu.alertkun.data.entity.toDomain
 import direct.kabu.alertkun.data.entity.toEntity
 import direct.kabu.alertkun.data.preferences.settingsDataStore
+import direct.kabu.alertkun.data.preferences.MonitoringHealthPreferences
 import direct.kabu.alertkun.model.AlertRule
 import direct.kabu.alertkun.model.AppLanguage
 import direct.kabu.alertkun.model.MailProcessingState
@@ -27,4 +28,81 @@ class MailRepository(private val dao: ReceivedMailDao) { suspend fun finalizeBat
 class SettingsRepository private constructor(private val store: androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences>, @Suppress("UNUSED_PARAMETER") isolatedStore: Unit) {
     constructor(context: Context) : this(context.applicationContext.settingsDataStore, Unit)
     val myDnsMasterId: Flow<String> = store.data.map { it[MYDNS_MASTER_ID] ?: "" }
-    suspend fun updateMyDnsMasterId(masterId: String) { store.edit { it[MYDNS_MASTER_ID] = masterId.trim() } } val settings: Flow<MonitoringSettings> = store.data.map { p -> MonitoringSettings(p[POLL] ?: 5, p[RETENTION] ?: 7, p[FAILURE] ?: 3, p[ENABLED] ?: false, p[CHECK_ON_APP_START] ?: true) }; val appLanguage: Flow<AppLanguage> = store.data.map { p -> p[LANGUAGE]?.let { AppLanguage.valueOf(it) } ?: AppLanguage.ENGLISH }; suspend fun update(settings: MonitoringSettings) { require(settings.pollIntervalMinutes in 1..1500); require(settings.mailRetentionDays in 1..99); require(settings.consecutiveFailureThreshold in 1..99); store.edit { p -> p[POLL] = settings.pollIntervalMinutes; p[RETENTION] = settings.mailRetentionDays; p[FAILURE] = settings.consecutiveFailureThreshold; p[ENABLED] = settings.monitoringEnabled; p[CHECK_ON_APP_START] = settings.checkImmediatelyOnAppStart } }; suspend fun updateAppLanguage(language: AppLanguage) { store.edit { it[LANGUAGE] = language.name } }; companion object { internal fun forStore(store: androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences>) = SettingsRepository(store, Unit); private val MYDNS_MASTER_ID = androidx.datastore.preferences.core.stringPreferencesKey("mydns_master_id"); private val POLL = intPreferencesKey("poll_interval_minutes"); private val RETENTION = intPreferencesKey("mail_retention_days"); private val FAILURE = intPreferencesKey("consecutive_failure_threshold"); private val ENABLED = booleanPreferencesKey("monitoring_enabled"); private val CHECK_ON_APP_START = booleanPreferencesKey("check_immediately_on_app_start"); private val LANGUAGE = androidx.datastore.preferences.core.stringPreferencesKey("app_language") } }
+    suspend fun updateMyDnsMasterId(masterId: String) { store.edit {
+        if ((it[MYDNS_MASTER_ID] ?: "") != masterId.trim()) direct.kabu.alertkun.data.preferences.FcmSchedulePreferences.invalidate(it)
+        it[MYDNS_MASTER_ID] = masterId.trim()
+    } }
+    internal val fcmRegistrationTargets = store.data.map {
+        direct.kabu.alertkun.push.FcmRegistrationTarget(it[MYDNS_MASTER_ID] ?: "", it[POLL] ?: 5,
+            it[ENABLED] ?: false, it[direct.kabu.alertkun.data.preferences.FcmSchedulePreferences.revision] ?: 0L)
+    }
+    val settings: Flow<MonitoringSettings> = store.data.map { p ->
+        MonitoringSettings(p[POLL] ?: 5, p[RETENTION] ?: 7, p[FAILURE] ?: 3, p[ENABLED] ?: false,
+            p[CHECK_ON_APP_START] ?: true, p[MonitoringHealthPreferences.enabled] ?: true)
+    }
+    val appLanguage: Flow<AppLanguage> = store.data.map { p -> p[LANGUAGE]?.let { AppLanguage.valueOf(it) } ?: AppLanguage.ENGLISH }
+    suspend fun update(settings: MonitoringSettings) {
+        require(settings.pollIntervalMinutes in 1..1500)
+        require(settings.mailRetentionDays in 1..99)
+        require(settings.consecutiveFailureThreshold in 1..99)
+        store.edit { p ->
+            invalidateFcmScheduleIfChanged(p, settings.pollIntervalMinutes, settings.monitoringEnabled)
+            if (!settings.monitoringEnabled || !settings.healthNotificationEnabled ||
+                p[ENABLED] != true || p[MonitoringHealthPreferences.enabled] == false) {
+                p.remove(MonitoringHealthPreferences.observingSince)
+            }
+            p[POLL] = settings.pollIntervalMinutes
+            p[RETENTION] = settings.mailRetentionDays
+            p[FAILURE] = settings.consecutiveFailureThreshold
+            p[ENABLED] = settings.monitoringEnabled
+            p[CHECK_ON_APP_START] = settings.checkImmediatelyOnAppStart
+            p[MonitoringHealthPreferences.enabled] = settings.healthNotificationEnabled
+        }
+    }
+    /** Save the monitoring form together; legacy callers leave the health preference unchanged. */
+    suspend fun updateMonitoringSettings(poll: Int, threshold: Int, enabled: Boolean, checkOnStart: Boolean,
+        healthNotificationEnabled: Boolean? = null) {
+        require(poll in 1..1500)
+        require(threshold in 1..99)
+        store.edit { p ->
+            invalidateFcmScheduleIfChanged(p, poll, enabled)
+            if (!enabled || p[ENABLED] != true) p.remove(MonitoringHealthPreferences.observingSince)
+            p[POLL] = poll
+            p[FAILURE] = threshold
+            p[ENABLED] = enabled
+            p[CHECK_ON_APP_START] = checkOnStart
+            if (healthNotificationEnabled != null) {
+                if (healthNotificationEnabled != (p[MonitoringHealthPreferences.enabled] ?: true)) {
+                    p.remove(MonitoringHealthPreferences.observingSince)
+                }
+                p[MonitoringHealthPreferences.enabled] = healthNotificationEnabled
+            }
+        }
+    }
+
+    /** Independent of monitoring scheduling and Gateway registration. */
+    suspend fun updateHealthNotificationEnabled(enabled: Boolean) {
+        store.edit { p ->
+            if (enabled != (p[MonitoringHealthPreferences.enabled] ?: true)) {
+                p.remove(MonitoringHealthPreferences.observingSince)
+            }
+            p[MonitoringHealthPreferences.enabled] = enabled
+        }
+    }
+    suspend fun updateAppLanguage(language: AppLanguage) { store.edit { it[LANGUAGE] = language.name } }
+    private fun invalidateFcmScheduleIfChanged(p: androidx.datastore.preferences.core.MutablePreferences, poll: Int, enabled: Boolean) {
+        if ((p[POLL] ?: 5) != poll || (p[ENABLED] ?: false) != enabled) {
+            direct.kabu.alertkun.data.preferences.FcmSchedulePreferences.invalidate(p)
+        }
+    }
+    companion object {
+        internal fun forStore(store: androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences>) = SettingsRepository(store, Unit)
+        private val MYDNS_MASTER_ID = androidx.datastore.preferences.core.stringPreferencesKey("mydns_master_id")
+        internal val POLL = intPreferencesKey("poll_interval_minutes")
+        private val RETENTION = intPreferencesKey("mail_retention_days")
+        private val FAILURE = intPreferencesKey("consecutive_failure_threshold")
+        internal val ENABLED = booleanPreferencesKey("monitoring_enabled")
+        private val CHECK_ON_APP_START = booleanPreferencesKey("check_immediately_on_app_start")
+        private val LANGUAGE = androidx.datastore.preferences.core.stringPreferencesKey("app_language")
+    }
+}
