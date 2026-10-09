@@ -19,6 +19,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MonitoringBackupStatusTest {
+    @Test fun lifecycleObservationIncludesGenerationsWithoutChangingState() = runBlocking {
+        val events = mutableListOf<Pair<String, Map<String, Any?>>>()
+        val repository = MonitoringStatusRepository.forStore(MemoryPreferences()) { event, fields -> events += event to fields }
+        assertEquals(1L, repository.changeSchedule(true, due, "PERIODIC", 15))
+        assertEquals(2L, repository.changeSchedule(false, null))
+        assertEquals(listOf("MONITORING_ENABLED", "GENERATION_CHANGED", "MONITORING_DISABLED", "GENERATION_CHANGED"), events.map { it.first })
+        assertEquals(0L, events.first().second["oldGeneration"])
+        assertEquals(2L, events.last().second["newGeneration"])
+        assertFalse(repository.executionStatus().monitoringEnabled)
+    }
+
+    @Test fun failedLifecycleObservationCannotPreventSchedulePersistence() = runBlocking {
+        val repository = MonitoringStatusRepository.forStore(MemoryPreferences()) { _, _ -> error("Observation unavailable") }
+        assertEquals(1L, repository.changeSchedule(true, due, "PERIODIC", 15))
+        assertTrue(repository.executionStatus().monitoringEnabled)
+    }
     @Test fun gatewayRegistrationPersistsAndPublishesWithoutChangingMonitoringExecution() = runBlocking {
         val store = MemoryPreferences()
         val repository = MonitoringStatusRepository.forStore(store)

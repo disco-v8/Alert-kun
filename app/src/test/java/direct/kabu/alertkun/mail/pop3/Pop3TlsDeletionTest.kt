@@ -18,24 +18,22 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
-/** Real TLS against a temporary local certificate, never trust-all or production credentials. */
+/** Real TLS against a temporary local certificate with disposable messages and fixture credentials. */
 class Pop3TlsDeletionTest {
     @get:Rule val temporary = TemporaryFolder()
     private val now = 1_700_000_000_000L
-    private lateinit var fixtureCertificate: java.security.cert.X509Certificate
 
-    private fun contexts(): Pair<SSLContext, SSLContext> {
+    private fun contexts(expired: Boolean = false): Pair<SSLContext, SSLContext> {
         val path = File(temporary.root, "fixture.p12")
         val keytool = File(System.getProperty("java.home"), "bin/keytool.exe")
         val executable = if (keytool.exists()) keytool else File(System.getProperty("java.home"), "bin/keytool")
-        val process = ProcessBuilder(executable.absolutePath, "-genkeypair", "-alias", "fixture", "-keyalg", "EC",
+        val process = ProcessBuilder(listOf(executable.absolutePath, "-genkeypair", "-alias", "fixture", "-keyalg", "EC",
             "-groupname", "secp256r1", "-dname", "CN=localhost", "-ext", "SAN=dns:localhost",
             "-ext", "EKU=serverAuth", "-validity", "2", "-storetype", "PKCS12", "-keystore", path.absolutePath,
-            "-storepass", "fixture-only", "-noprompt").redirectErrorStream(true).start()
+            "-storepass", "fixture-only", "-noprompt") + if (expired) listOf("-startdate", "2020/01/01 00:00:00") else emptyList()).redirectErrorStream(true).start()
         process.inputStream.use { it.readBytes() }
         assertEquals("Temporary test certificate creation", 0, process.waitFor())
         val keys = KeyStore.getInstance("PKCS12").apply { path.inputStream().use { load(it, "fixture-only".toCharArray()) } }
-        fixtureCertificate = keys.getCertificate("fixture") as java.security.cert.X509Certificate
         val keyManagers = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply {
             init(keys, "fixture-only".toCharArray())
         }
@@ -57,21 +55,86 @@ class Pop3TlsDeletionTest {
     private fun mail(uidl: String, receivedAt: Long = now) = ReceivedMail(uidl, "deletion-test", uidl,
         receivedAt, null, emptyMap(), null, null, false, MailProcessingState.PROCESSED, false, null)
 
-    @Test fun selfSignedCertificateRequiresExplicitPinAndInspectionNeverAuthenticates() = runBlocking {
+    @Test fun strictAndCaOnlyRejectSelfSignedBeforeAuthentication() = runBlocking {
+        val (serverTls, _) = contexts()
+        for (mode in listOf(TlsValidationMode.STRICT, TlsValidationMode.CA_VALIDATED_NO_HOSTNAME)) {
+            Pop3TestServer(socketFactory = serverTls.serverSocketFactory).use { server ->
+                val account = server.account(ServerDeletePolicy.IMMEDIATELY).copy(protocol = MailProtocol.POP3S,
+                    host = "localhost", tlsValidationMode = mode)
+                try {
+                    MailConnectionSettings.openSocket(account).close()
+                    fail("Self-signed must not be trusted in $mode")
+                } catch (error: Exception) {
+                    assertEquals(MonitoringFailureKind.CERTIFICATE_UNTRUSTED, MailConnectionSettings.classify(error))
+                }
+                assertTrue(server.commands.isEmpty())
+            }
+        }
+    }
+
+    @Test fun insecureSelfSignedReceiveAndDeletionUseEncryptedConnectionsWithoutPin() = runBlocking {
         val (serverTls, _) = contexts()
         Pop3TestServer(socketFactory = serverTls.serverSocketFactory).use { server ->
             val account = server.account(ServerDeletePolicy.IMMEDIATELY).copy(protocol = MailProtocol.POP3S,
-                tlsValidationMode = TlsValidationMode.PINNED_CERTIFICATE)
-            val fingerprint = direct.kabu.alertkun.mail.common.inspectServerCertificate(account)
-            assertEquals(direct.kabu.alertkun.mail.common.certificateFingerprint(fixtureCertificate), fingerprint)
-            assertTrue(server.commands.isEmpty())
-            assertNull(account.certificateFingerprint)
-            try { MailConnectionSettings.openSocket(account).close(); fail("Unapproved certificate") }
-            catch (error: Exception) { assertEquals(MonitoringFailureKind.CERTIFICATE_NOT_APPROVED, MailConnectionSettings.classify(error)) }
-            val approved = account.copy(certificateFingerprint = fingerprint)
-            Pop3ServerDeletion(approved, "fixture-secret").deleteProcessed({ _, uid -> mail(uid) }, now)
+                tlsValidationMode = TlsValidationMode.INSECURE)
+            val store = Session.getInstance(MailConnectionSettings.properties(account)).getStore("pop3s")
+            try {
+                store.connect(account.host, account.port, account.username, "fixture-secret")
+                val folder = store.getFolder("INBOX")
+                folder.open(Folder.READ_ONLY); folder.close(false)
+                assertEquals(listOf("test-uid-1"), server.remaining())
+                assertFalse(server.commands.any { it.startsWith("DELE") })
+            } finally { if (store.isConnected) store.close() }
+            Pop3ServerDeletion(account, "fixture-secret").deleteProcessed({ _, uid -> mail(uid) }, now)
             assertTrue(server.remaining().isEmpty())
-            assertEquals(fingerprint, approved.certificateFingerprint)
+        }
+    }
+
+    @Test fun selfSignedAllowedReceiveAndDeletionNeedNoApproval() = runBlocking {
+        val (serverTls, _) = contexts()
+        Pop3TestServer(socketFactory = serverTls.serverSocketFactory).use { server ->
+            val account = server.account(ServerDeletePolicy.IMMEDIATELY).copy(protocol = MailProtocol.POP3S,
+                host = "localhost", tlsValidationMode = TlsValidationMode.SELF_SIGNED_ALLOWED)
+            val store = Session.getInstance(MailConnectionSettings.properties(account)).getStore("pop3s")
+            try {
+                store.connect(account.host, account.port, account.username, "fixture-secret")
+                val folder = store.getFolder("INBOX")
+                folder.open(Folder.READ_ONLY); folder.close(false)
+            } finally { if (store.isConnected) store.close() }
+            Pop3ServerDeletion(account, "fixture-secret").deleteProcessed({ _, uid -> mail(uid) }, now)
+            assertTrue(server.remaining().isEmpty())
+        }
+    }
+
+    @Test fun selfSignedAllowedRejectsWrongHostnameBeforeAuthentication() = runBlocking {
+        val (serverTls, _) = contexts()
+        Pop3TestServer(socketFactory = serverTls.serverSocketFactory).use { server ->
+            val account = server.account(ServerDeletePolicy.IMMEDIATELY).copy(protocol = MailProtocol.POP3S,
+                tlsValidationMode = TlsValidationMode.SELF_SIGNED_ALLOWED)
+            try { MailConnectionSettings.openSocket(account).close(); fail("Hostname must match") }
+            catch (error: Exception) { assertEquals(MonitoringFailureKind.HOSTNAME_MISMATCH, MailConnectionSettings.classify(error)) }
+            assertTrue(server.commands.isEmpty())
+        }
+    }
+
+    @Test fun selfSignedAllowedRejectsExpiredSelfSignedAndInsecureAcceptsIt() = runBlocking {
+        val (serverTls, _) = contexts(expired = true)
+        for (mode in listOf(TlsValidationMode.SELF_SIGNED_ALLOWED, TlsValidationMode.INSECURE)) {
+            Pop3TestServer(socketFactory = serverTls.serverSocketFactory).use { server ->
+                val account = server.account(ServerDeletePolicy.IMMEDIATELY).copy(protocol = MailProtocol.POP3S,
+                    host = "localhost", tlsValidationMode = mode)
+                try {
+                    MailConnectionSettings.openSocket(account).use {
+                        assertTrue(it is javax.net.ssl.SSLSocket)
+                        assertTrue((it as javax.net.ssl.SSLSocket).session.protocol.startsWith("TLS"))
+                    }
+                    assertEquals(TlsValidationMode.INSECURE, mode)
+                } catch (error: Exception) {
+                    assertEquals(TlsValidationMode.SELF_SIGNED_ALLOWED, mode)
+                    assertEquals(MonitoringFailureKind.CERTIFICATE_EXPIRED, MailConnectionSettings.classify(error))
+                }
+                assertTrue(server.commands.isEmpty())
+            }
         }
     }
 

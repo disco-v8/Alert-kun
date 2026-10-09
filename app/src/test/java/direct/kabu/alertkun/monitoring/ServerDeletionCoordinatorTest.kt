@@ -44,7 +44,7 @@ class ServerDeletionCoordinatorTest {
         Pop3TestServer().use { server ->
             val store = Store()
             var alarms = 0
-            val check = coordinator(store, AccountMailReceiver(listOf(server.account(ServerDeletePolicy.IMMEDIATELY)), credentials)) {
+            val check = coordinator(store, AccountMailReceiver(listOf(server.account(ServerDeletePolicy.IMMEDIATELY)), credentials, resolveDeletes = { _, deleted, absent -> deleted.size to absent.size }, localProcessedMails = { accountId -> store.mails.filter { it.accountId == accountId } })) {
                 assertEquals(MailProcessingState.RECEIVED, store.mails.single().processingState)
                 assertFalse(server.commands.any { it.startsWith("DELE") }); alarms++
             }
@@ -62,7 +62,7 @@ class ServerDeletionCoordinatorTest {
         Pop3TestServer().use { server ->
             val store = Store(); var alarms = 0
             server.rejectDeleteNumber = 1
-            val check = coordinator(store, AccountMailReceiver(listOf(server.account(ServerDeletePolicy.IMMEDIATELY)), credentials)) { alarms++ }
+            val check = coordinator(store, AccountMailReceiver(listOf(server.account(ServerDeletePolicy.IMMEDIATELY)), credentials, resolveDeletes = { _, deleted, absent -> deleted.size to absent.size }, localProcessedMails = { accountId -> store.mails.filter { it.accountId == accountId } })) { alarms++ }
             val failed = check.check()
             assertFalse(failed.success); assertEquals(MonitoringFailureKind.PROTOCOL_ERROR, failed.failureKind)
             assertEquals(MailProcessingState.PROCESSED, store.mails.single().processingState)
@@ -76,7 +76,7 @@ class ServerDeletionCoordinatorTest {
         for (failure in listOf("handoff", "save", "finalize")) {
             Pop3TestServer().use { server ->
                 val store = Store().apply { rejectSave = failure == "save"; rejectFinalize = failure == "finalize" }
-                val check = coordinator(store, AccountMailReceiver(listOf(server.account(ServerDeletePolicy.IMMEDIATELY)), credentials)) {
+                val check = coordinator(store, AccountMailReceiver(listOf(server.account(ServerDeletePolicy.IMMEDIATELY)), credentials, resolveDeletes = { _, deleted, absent -> deleted.size to absent.size }, localProcessedMails = { accountId -> store.mails.filter { it.accountId == accountId } })) {
                     if (failure == "handoff") error("Handoff failed")
                 }
                 assertFalse(check.check().success)
@@ -91,7 +91,7 @@ class ServerDeletionCoordinatorTest {
         for (policy in listOf(ServerDeletePolicy.IMMEDIATELY, ServerDeletePolicy.NEVER)) {
             Pop3TestServer().use { server ->
                 val store = Store()
-                val check = coordinator(store, AccountMailReceiver(listOf(server.account(policy)), credentials), emptyList()) { error("No match must not alarm") }
+                val check = coordinator(store, AccountMailReceiver(listOf(server.account(policy)), credentials, resolveDeletes = { _, deleted, absent -> deleted.size to absent.size }, localProcessedMails = { accountId -> store.mails.filter { it.accountId == accountId } }), emptyList()) { error("No match must not alarm") }
                 assertTrue(check.check().success); assertTrue(check.check().success)
                 assertEquals(1, store.mails.size); assertFalse(store.mails.single().alertTriggered)
                 assertEquals(if (policy == ServerDeletePolicy.NEVER) 1 else 0, server.remaining().size)

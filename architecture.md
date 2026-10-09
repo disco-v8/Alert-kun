@@ -29,19 +29,21 @@ FCM / WorkManager保険 → MailCheckWorker → MailCheckCoordinator → MailRec
 
 MainActivityのprocess内初回起動でFcmRegistrationCoordinatorがFirebaseMessaging.getInstance().tokenを取得する。専用AlertKunFirebaseMessagingService.onNewTokenも同じ登録経路へ委譲する。FCM dataのactionがCHECK_MAILと完全一致する場合のみ、FcmMailCheckDispatcherから既存MonitoringScheduler.runNowへ渡す。onMessageReceived内では通信せず、既存MailCheckWorkerがscheduled Workerと共通のexecutionMutexで1回チェックを直列実行する。未知action・data欠落は無視し、任意dataはログへ出さない。DEBUGログには受信・判定・enqueueの端末時刻とpriorityを記録する。FCMはMonitoring ONの場合だけ実行し、ON化・interval変更・scheduleGeneration変更・予約キャンセルは行わない。手動runNowはMonitoring OFFでも単発確認可能。WorkManagerは15分以上の保険予約を維持する（詳細は7章）。自然Doze時の即時実行保証はない。
 
-Gateway登録はSettingsRepositoryのDataStoreキーmydns_master_idが空でない場合に行い、Debug・Releaseとも保存済みMasterIDを利用する。FCM tokenをRoom・DataStoreへ保存せず、ログはDEBUGだけ先頭6文字・末尾4文字・長さを表示する（短いtokenは全体を隠す）。MasterID・MasterPwd・HTTP本文・例外messageはログに出さない。
+Gateway登録はSettingsRepositoryのDataStoreキーmydns_master_idが空でない場合に行う。初回またはBearer失効時のみ、保存済みMasterID・CredentialStoreのMasterPwd・現在FCM tokenでHTTPS /authへ一次認証する。返却deviceTokenは既存AndroidKeystoreCredentialStoreのfcm_gateway_device_token_v1へAES/GCMで暗号化保存し、Room・DataStoreへ保存しない。MasterID・MasterPwd・deviceToken・Authorization・FCM token（一部を含む）・HTTP本文・例外messageはログに出さない。
 
-FcmTokenRegistrarは標準HttpsURLConnectionでhttps://fcm.gpg.jp:8119/alertkun-api/set-intervalへmasterid / fcmtoken / rcvintervalをPOSTする。標準TLS・ホスト名検証を使用し、redirectは追従しない。接続・読取timeoutは各15秒、応答解析は8192文字まで。HTTP 2xxとJSON status="success"の両方で成功とする。HTTP・network・JSON・応答statusエラーを区別する。
+FcmTokenRegistrarは標準HttpsURLConnectionでhttps://fcm.gpg.jp:8119/alertkun-api/のauth / set-intervalをPOSTする。標準TLS・ホスト名検証を使用し、redirectは追従しない。接続・読取timeoutは各15秒、応答解析は8192文字まで。HTTP 200とJSON status="success"の両方で成功とし、authでは非空のdeviceTokenも必要。set-intervalはAuthorization: Bearerを必須とし、JSONはfcmtoken / rcvintervalだけ。401時だけ保存Bearerを削除して一次認証・set-interval再試行を最大1回行い、再試行も401ならBearerを削除して終了する。503・timeout・TLS・その他401以外の失敗ではtokenを削除しない。HTTP・network・JSON・応答status・credential保存エラーを区別する。
 
-rcvintervalは登録直前にSettingsRepositoryから現在のpollIntervalMinutesを読む（1～1500分）。DataStoreの同一snapshotからMasterID・間隔・監視ON/OFF・主監視revisionをdistinctUntilChangedで監視し、初回・設定変更で現在tokenを取得して再登録する。onNewTokenも登録する。MasterPwdだけの変更では再登録しない。MasterID空欄は正常skip。監視OFFでも既存APIへの登録は維持するが表示基準を作らず、OFF→ONで新しい登録を行う。Gateway送信停止・削除APIは追加しない。登録は独立SupervisorJob内で直列化し、失敗を監視へ伝播させない。process終了を跨ぐ登録保証・永続retryはなく、次回アプリ起動・token更新・設定変更が次の機会になる。正式MyDNS認証・Gateway認証・削除APIは未実装。
+rcvintervalは登録直前にSettingsRepositoryから現在のpollIntervalMinutesを読む（1～1500分）。DataStoreの同一snapshotからMasterID・間隔・監視ON/OFF・主監視revisionをdistinctUntilChangedで監視し、初回・設定変更で現在tokenを取得して再登録する。onNewTokenは既存Bearerのset-intervalへ新FCM tokenを送り、401時だけ再認証する。MasterPwdだけの変更もprocess内通知で再登録する。MasterID空欄は正常skip、一次認証に必要なMasterPwd未設定では通信しない。監視OFFでも既存登録は維持するが表示基準を作らず、OFF→ONで新しい登録を行う。Gateway送信停止・削除APIは追加しない。登録は独立SupervisorJob内で直列化し、失敗を監視へ伝播させない。process終了を跨ぐ登録保証・永続retryはなく、次回アプリ起動・token更新・設定変更が次の機会になる。
 
-設定画面のMyDNS.JPセクションでMasterID／MasterPwdを保存する。MyDnsSettingsRepositoryは既存AndroidKeystoreCredentialStoreの専用credential key mydns_master_password_v1を使い、同じAES/GCM鍵・暗号文保存方式を再利用する。MasterPwdは入力中だけUIのメモリに保持し、成功・画面離脱で空にする。保存済み値をUIへ復号表示せず、存在状態のみ返す。空入力は既存秘密情報を保持する。新規入力は保存・復号一致を確認してからMasterIDをDataStoreへ書き、失敗時は旧credentialとMasterIDの補償を試みる。復元失敗は別の失敗として表示する。保存と補償をprocess内Mutex・NonCancellableで保護するが、異なる保存先を跨ぐprocess停止時の原子性は保証しない。バックアップでKeystore鍵の復元は保証されない。MyDNS.JPへの通信・認証テストは行わず、Gateway JSONへMasterPwdを含めない。
+設定画面のMyDNS.JPセクションでMasterID／MasterPwdを保存する。MyDnsSettingsRepositoryは既存credential key mydns_master_password_v1を使う。MasterPwdは入力中だけUIのメモリに保持し、成功・画面離脱で空にする。保存済み値をUIへ復号表示せず、存在状態のみ返す。空入力は既存passwordを保持する。新規入力は保存・復号一致を確認してからMasterIDをDataStoreへ書き、失敗時は旧passwordとMasterIDの補償を試みる。MasterIDまたはMasterPwd変更時は、ID公開前に旧deviceTokenを削除する。保存失敗の補償でも旧Bearerは復活させず、次回一次認証へ委ねる。保存と認証・token書込は共通process内Mutexで保護し、保存・補償はNonCancellableだが、異なる保存先を跨ぐprocess停止時の原子性は保証しない。バックアップでKeystore鍵の復元は保証されない。一次認証401はMyDNS設定確認、一時障害はGateway登録失敗として既存画面に簡潔に表示し、Bearer用UIは設けない。
+
+永続観測ログへGATEWAY_AUTH_START / SUCCESS / FAILURE / RETRY、GATEWAY_SET_INTERVAL_START / SUCCESS / FAILUREを追加する。HTTP status、retry number、interval、generation、categoryだけを保存し、既存GATEWAY_INTERVAL_REGISTEREDと予定表示基準の更新条件は維持する。
 
 ## 2. 永続化
 
 ### Room
 
-AlertKunDatabaseの現在のschemaはv5。accounts / rules / received_mailsを保存する。Entityとdomain modelはmapperで分離する。enumは安定した名前で保存し、Android定数やCompose色値を保存しない。
+AlertKunDatabaseの現在のschemaはv6。accounts / rules / received_mailsを保存する。Entityとdomain modelはmapperで分離する。enumは安定した名前で保存し、Android定数やCompose色値を保存しない。
 
 | Migration | 追加内容 | 既存データの扱い |
 | --- | --- | --- |
@@ -50,7 +52,9 @@ AlertKunDatabaseの現在のschemaはv5。accounts / rules / received_mailsを�
 | 3 → 4 | accountsのserverDeletePolicy | NEVER。旧deleteAfterReceiveの値から削除を有効にしない |
 | 4 → 5 | accountsのtlsValidationMode / certificateFingerprint | STRICT / NULL。旧予約値から信頼を登録しない |
 
-1→5のmigrationを登録し、破壊的fallbackは使用しない。schema JSONはapp/schemas以下に置く。AlarmModeはTEXT列にONCE / THREE_TIMES / FIVE_TIMES / UNTIL_STOPPEDを保存する。
+1→6のmigrationを登録し、破壊的fallbackは使用しない。schema JSONはapp/schemas以下に置く。AlarmModeはTEXT列にONCE / THREE_TIMES / FIVE_TIMES / UNTIL_STOPPEDを保存する。
+
+POP3削除候補の解決状態はReceivedMail.serverDeleteResolution（PENDING / DELETED / ABSENT）に保存する。完全UIDL照合と正常QUIT応答確認後だけ、削除確定・サーバー不在のUIDLをRoom transactionで解決し、以後の候補から除外する。通信・UIDL・DELE・QUIT失敗や結果不明では候補を維持する。RECEIVED / PROCESSEDと独立し、5→6 migrationは既存データをPENDINGとして保持する。SERVER_UIDL_MATCH / DELETE_CANDIDATES_RESOLVEDは件数・理由だけを記録する。
 
 ReceivedMailの重要な情報はid、accountId、remoteMessageId、receivedAtEpochMillis、From、ヘッダー、Subject、必要な本文、bodyFetched、processingState、alertTriggered、matchedRuleId、backgroundColor。UNIQUE(accountId, remoteMessageId)で重複保存を防ぐ。UIDL / UIDだけを先に保存せず、再処理に必要なデータとRECEIVEDを同じ行の挿入で確定する。
 
@@ -168,6 +172,30 @@ FCM = primary monitoring trigger、WorkManager = backup/reconciliation。Gateway
 
 onMessageReceivedはCHECK_MAILのみMonitoringScheduler.runNow(context, FCM)へ渡して短時間で返す。手動はMANUAL、通常予約はSCHEDULED_WORK、起動時即時確認はSTARTUPとしてinputDataで識別する。FCMと手動は別unique work名でKEEPし、要求の吸収による成功元の混同を避ける。すべて同じMailCheckWorkerとprocess-local executionMutexを使用し、設定と実行状態はmutex取得後に再読込する。サービス内にメール通信・独自mutexを置かない。
 
+### FCM受信時の監視状態通知
+
+MailCheckCoordinatorは成功結果のselectedAlarmへ、既存poll選定で採用したAlarmEventをメモリ内で返す。Workerは正常完了後、監視ON・同世代の場合に6004を最終結果へ再更新する。非一致はNORMAL、採用警報ありはRULE_MATCHとして表示・観測し、WARN / ALERTの新しい分類は設けない。既存alarmのtitle / subject / detailsリソースを再利用し、同じ内容の表示済み警報通知があればfallback案内も含めて本文を参照する。AlarmControllerを再呼出しせず、警報・Rule選定・Room確定・削除・成功記録・skip条件を変更しない。通知失敗は監視結果へ伝播させない。失敗・skipでは最終結果更新を行わず、監視OFFでは既存cancelを維持する。
+
+MONITORING_NOTIFICATION_POST / UPDATE等へresultState（NORMAL / RULE_MATCH）、notificationPhase（RECEIPT / CHECK_RESULT）、Work IDを追加する。件名・差出人・ルール名・本文は通知表示だけに使用し、永続観測ログへ保存しない。6004へ停止action・FGS・警報出力をコピーしない。
+
+監視ONのCHECK_MAIL受信時にMonitoringStatusNotifierが専用channel alertkun_monitoring_status（表示名「監視状態」/「Monitoring status」、初期IMPORTANCE_DEFAULT）・固定notification ID 6004でpost / updateし、その後に既存dispatch / enqueueへ進む。受信日時と「異常なし」を表示し、メール確認完了を待たない。この通知で成功記録・failure count・予定・skip条件を変更しない。警報5001/5005、失敗6002、日次6003のchannel / IDと分離する。OnlyAlertOnceで既存通知更新時の音・振動・heads-up再通知を抑制し、通常画面へ設定を追加しない。
+
+現在channelのimportance / sound有無 / shouldVibrateを読み取る。MIN / LOWはサイレント相当、DEFAULTはsoundなし・振動なしの場合だけサイレント相当とし、不明・HIGH以上は案内文を表示する。DNDや端末音量による一時的無音をchannel設定済みと判断しない。既存channelのユーザー設定は上書きしない。API 24/25はchannel判定不能として案内を表示する。
+
+設定とgenerationを同じDataStore snapshotから読み、FCM callback内の通知用読取だけ最大1秒に制限する。専用process内lockで通知post / cancelだけを直列化し、executionMutexへ影響しない。監視OFFのstop処理でこのIDをcancelし、OFF中のFCMもpostせずcancelする。通知権限拒否・channel無効・読取／通知失敗は記録して既存dispatchを継続する。WakeLock・FGS・AlarmManager・予約・通信は追加しない。
+
+永続ログはMONITORING_NOTIFICATION_POST / UPDATE / CANCEL / CHANNEL_STATE / BLOCKED / CANCEL_FAILEDを記録し、ID・channel・importance・silent・sound有無・振動有無・action・trigger・generation・FCM messageIdHashで受信とenqueueへ対応付ける。FCM_RECEIVEDのpriority / originalPriority / sentTimeは維持する。可視通知によるHIGH維持やdeep Doze中の到達は保証しない。
+
+### 端末内永続観測ログ
+
+Debug / Releaseとも、既存処理のFCM受信・enqueue・Worker/mutex・skip判定値・チェック結果・アカウント別接続・network stabilization・監視世代変更・Gateway登録成功をfilesDir/observability/monitoring-observation.logへ記録する。1イベント1行、端末の現在timezone offset付きISO8601日時とevent / key=value形式。1ファイル最大1MiB、activeと.1～.3の計4ファイル（最大4MiB）をサイズでローテーションする。通常UI・権限・WakeLock・FGS・予約・通信は追加せず、監視条件へ使用しない。
+
+小さい追記をprocess内で直列化し、イベントごとにcloseする。未書込キューやイベントごとのfsyncは使用しない。process再起動・rebootでファイルを初期化しないが、電源断中の最後の書込・ストレージ障害時の保存は保証しない。保存失敗は監視へ伝播させない。観測ディレクトリだけをbackup / device transferから除外する。
+
+Work IDをWorker・チェック・接続・networkイベントへ渡す。FCM message ID / collapse keyはSHA-256のみ保存し、enqueue要求Work IDと対応させる。KEEP / UPDATE後はread-onlyの非同期snapshotで残存Work IDとstateを記録する。snapshotは後続処理と競合し得るため取得時刻を併記し、プロセス終了時には未記録になり得る。enqueue要求のgenerationはprocess内で最後に観測した値（未観測ならnull）、FCM受信後snapshotとWorkerのmutex内読取で現在世代を記録する。未知actionはIGNOREDに固定し、任意payload・token・接続先・username・メール内容・例外messageは保存しない。
+
+debug buildはadb exec-out run-as direct.kabu.alertkun tar -cf - files/observabilityでroot不要の回収が可能。Releaseにも記録するが、非debuggable buildのrun-as回収はできない。
+
 ### 成功記録とbackup skip
 
 DataStoreに最後の正常成功時刻、MailCheckTrigger、成功時のscheduleGeneration、最終試行成功flagを同じeditで保存する。試行開始時に成功flagをfalseにして、同じミリ秒でのキャンセル・process終了でも過去の成功を流用しない。正常な新着0件も成功。受信のみ、offline、通信・認証・TLS失敗、例外、キャンセルはFCM成功にしない。後続失敗や未完了checkがあれば古い成功をskipの根拠にしない。旧データにtrigger・backup intervalがない場合や未知値は安全に実行側へ倒す。
@@ -196,13 +224,23 @@ ACTION_TIME_CHANGEDはwall clockとelapsedRealtimeの差を使い、基準があ
 
 実チェックのexecutionMutex内でDefaultNetworkMonitorを1個だけ登録し、終了・失敗・キャンセル時に解除する。registerDefaultNetworkCallbackのonAvailable / onLostでdefault networkの変更世代を追跡し、onCapabilitiesChangedの引数からINTERNET / VALIDATEDを更新する。callback内では同期問い合わせや通信を行わない。Wi-Fi・モバイル・VPNなどtransportで判定を分けない。
 
-NetworkStabilizationは1チェック全体で合計最大8秒だけcallbackによる復旧を待つ。既存の各接続・読み書きtimeout（30秒）より短く、manualにも同じ上限を適用する。利用可能になれば即再開する。capabilityは補助情報であり、猶予後にdefault networkが存在すれば実接続結果を最終判定とする。存在しなければDEVICE_OFFLINEで通常の失敗処理へ進む。
+NetworkStabilizationは1チェック全体でcallbackによる安定化待ちとretry間隔を合わせて合計最大8秒だけ待つ。既存の各接続・読み書きtimeout（30秒）より短く、manualにも同じ上限を適用する。利用可能になれば即再開する。capabilityは補助情報であり、猶予後にdefault networkが存在すれば実接続結果を最終判定とする。存在しなければDEVICE_OFFLINEで通常の失敗処理へ進む。
 
-読み取り接続中にdefault network変更を観測し、socket・EOF・DNS・接続timeoutなど通信経路の例外が発生した場合だけ、同じ待機予算内で最大1回再試行する。認証・TLS・証明書・protocolエラーは対象外。Coordinator全体、Room確定、Rule評価、警報handoff、POP3削除は再実行しない。DELE / QUITの結果が不明な削除は即失敗とし、通常の次回チェックへ委ねる。UID/UIDL重複防止を維持する。
+読み取り通信でsocket・EOF・DNS・接続timeoutなど型で判定できる一時的ネットワーク例外が発生した場合、default network変更の有無によらず同じ待機予算内で1チェック全体に最大2回再試行する（読み取り通信は初回を含め最大3試行）。retry間隔は3秒・5秒を基本とし、共有予算の残りまで短縮する。残り予算が3秒未満なら即retryせず失敗を返す。変更の有無は観測情報として残し、retry判定・開始・終了に現在のnetwork有無・INTERNET・VALIDATED・attempt / maxAttempts・retry回数・待機時間と結果を記録する。一般的なIOExceptionだけではretryしない。認証・TLS・証明書・protocolエラーは対象外。Coordinator全体、Room確定、Rule評価、警報handoff、POP3削除は再実行しない。DELE / QUITの結果が不明な削除は即失敗とし、通常の次回チェックへ委ねる。UID/UIDL重複防止を維持する。
 
-FCM・保険・手動・起動時は同じMailReceiver wrapperを利用する。Workerは最終結果だけを成功時刻・failure count・health履歴へ反映し、復旧した途中のエラーは通知しない。OFF・generation・backup skip判定は登録前のまま維持する。長時間待機・無限retry・監視FGS・WakeLockは追加しない。
+FCM・保険・手動・起動時は同じMailReceiver wrapperを利用する。Workerは最終結果だけを成功時刻・failure count・health履歴へ反映し、復旧した途中のエラーは通知しない。通信が3試行とも失敗してもメール確認の失敗は1回だけ記録する。OFF・generation・backup skip判定は登録前のまま維持する。長時間待機・無限retry・監視FGS・WakeLockは追加しない。
 
 Angus Mail 2.0.4のPOP3Store.protocolConnectは一部EOFExceptionをcauseなしのAuthenticationFailedExceptionへ変換する。認証拒否との確実な区別ができないため、文言だけで通信例外へ読み替えず再試行対象外とする。この場合は通常の失敗として記録され得る。
+
+### Android metered background restriction
+
+CELLULAR上でFCMは正常受信しWorkerも起動するのに、READ_HEADERS前のDNS解決だけが失敗する場合は、UIDの `REJECT_METERED_BACKGROUND` / `METERED_USER_RESTRICTED` を確認すること。
+
+2026-10-09のPixel 7a実機試験では、設定画面の「バックグラウンドデータ」がONにもかかわらずUIDに `REJECT_METERED_BACKGROUND` が残っていた。
+
+「バックグラウンドデータ」を OFF → ON と切り替えることでpolicyが解除され、Wi-Fi OFF / CELLULARのみの状態で自然FCM → Worker → POP3S → CHECK_SUCCESS を確認した。
+
+なお「モバイルデータの無制限利用」はData Saver例外設定であり、このpolicyとは別物。
 
 ## 8. 失敗管理と表示
 
@@ -222,7 +260,7 @@ DataStoreへ観測開始、前回通知時刻、最後のmail check失敗時刻�
 
 MonitoringFailureKindでDEVICE_OFFLINEとSERVER_UNAVAILABLE、DNS、timeout、認証、TLS・証明書、protocolエラー等を区別する。連続失敗閾値は1～99、default 3。端末offlineも失敗countへ含める。新着0通を含む正常なcheckでcountと異常通知状態をresetする。
 
-ネットワーク切替に対する限定retry後も失敗した場合やretry対象外の失敗では、Workerの即時retry queueを作らず、次の通常pollで再確認する。キャンセルは伝播させる。監視異常通知は設定した連続失敗回数と、その回の失敗日時を改行して表示する。本文日時は端末local timezoneのyyyy/MM/dd HH:mm:ss、BigTextStyleで複数行を表示する。内部の失敗分類は維持する。認証・TLS等の詳細分類は接続テストUIで表示する。メイン画面に全分類や失敗countを表示する実装はない。
+一時的ネットワーク障害に対する限定retry後も失敗した場合やretry対象外の失敗では、Workerの即時retry queueを作らず、次の通常pollで再確認する。キャンセルは伝播させる。監視異常通知は設定した連続失敗回数と、その回の失敗日時を改行して表示する。本文日時は端末local timezoneのyyyy/MM/dd HH:mm:ss、BigTextStyleで複数行を表示する。内部の失敗分類は維持する。認証・TLS等の詳細分類は接続テストUIで表示する。メイン画面に全分類や失敗countを表示する実装はない。
 
 メイン画面の「最終確認」は日次監視ステータス通知と同じlastSuccessfulCheckAtEpochMillisを参照する。FCM・SCHEDULED_WORK・MANUAL・STARTUPの実チェック全体が正常完了した時刻だけを保存し、削除失敗・backup skip・旧世代skipでは更新しない。明示的な監視OFF時の手動確認成功は更新する。
 
@@ -283,7 +321,9 @@ AlarmController.sessionはServiceのactivateで公開するStateFlow<AlarmSessio
 
 AlarmSoundMappingでAndroid定数へ変換する。soundUri指定があれば使用し、未指定・開けない場合はそのカテゴリのAndroid標準URIへfallbackする。種別変更時はUIで旧soundUriをnullへ戻す。picker結果は起動時の種別と現在種別が一致する場合のみ反映する。
 
-表のusageは有限回数とpreviewに適用する。UNTIL_STOPPEDだけ選択した音源URI・カテゴリfallbackを維持し、再生用途とAudio FocusをUSAGE_ALARM（API 24～25はSTREAM_ALARM）に統一する。Android 17 / target 37では、FCM経由で開始したFGSがwhile-in-use能力を持たず、通知音usageの背景再生がOSにミュートされる。exact alarm権限によるUSAGE_ALARM例外へ適合させる（[Android公式仕様](https://developer.android.com/about/versions/17/changes/bg-audio)）。アラーム音量・DNDに従い、端末設定は変更しない。CONTENT_TYPE_SONIFICATIONと有限回数のAudio Focus非要求を維持する。
+表のusageは有限回数・preview・UNTIL_STOPPEDの全てに適用する。soundTypeは再生用途・音源URI・カテゴリfallback・Audio Focus（API 24～25は種別ごとのlegacy stream）を決め、alarmModeは継続時間だけを決める。UNTIL_STOPPEDでもALARMへ強制変換しない。通知・着信・アラームそれぞれのAndroid設定に従い、端末設定は変更しない。CONTENT_TYPE_SONIFICATIONと有限回数のAudio Focus非要求を維持する。
+
+Android 17 / target 37では、FCM等から始まるFGSがwhile-in-use能力を持たない場合、通知・着信用途の背景音声やAudio FocusをOSが抑止し得る。exact alarm権限の音声例外はUSAGE_ALARMだけに適用される（[Android公式仕様](https://developer.android.com/about/versions/17/changes/bg-audio)）。この制約を音種別の変更で回避しない。Focus拒否時も既存の無音session・通知・振動・Stopを維持する。
 
 VibrationPatternはNONE / PATTERN_1 / PATTERN_2 / PATTERN_3。共通AlarmVibration.timingsはそれぞれなし、[0,300]、[0,200,150,200]、[0,350,150,350,150,350]ミリ秒。継続用のみ末尾1000ms休止を追加してrepeat index 0、有限回数とpreviewはrepeat -1。
 
@@ -301,7 +341,7 @@ accountId + UIDLでRoomを照合し、PROCESSED、ID一致、有効なreceivedAt
 
 ### POP3の実行順と失敗
 
-CoordinatorのhandoffとRoom batch確定が成功した後、Pop3ServerDeletionが専用の新しい接続で認証しUIDL一覧を確認する。全UIDL形式・一意性と全Room lookupを確認してからDELEへ進む。対象0件 / NEVERでは削除commandを送らない。
+CoordinatorのhandoffとRoom batch確定が成功した後、AccountMailReceiverがアカウントごとのRoomのPROCESSEDメールを既存ServerDeleteEligibilityで判定し、ローカル削除候補UIDLを抽出する。候補0件なら削除接続を開かず正常終了する。DELETE_CANDIDATESの件数とPOP3_DELETE_SKIP reason=NO_DELETE_CANDIDATESを観測ログに記録し、UIDL・メール内容は記録しない。候補がある場合だけPop3ServerDeletionが専用の新しい接続で認証しUIDL一覧を確認する。候補は接続要否だけの判断に使い、全UIDL形式・一意性と全Room lookupを再確認してからDELEへ進む。対象0件 / NEVERでは削除commandを送らない。候補取得失敗は0件扱いにせずpoll失敗とする。
 
 全DELEの+OK確認後だけQUITを送信し、正常終了で削除を確定する。DELE途中のエラー・キャンセル・不明状態ではQUITを送らずsocketを閉じ、削除確定を避ける。QUIT送信後に応答が失われた場合の確定有無は不明なので、次回pollでサーバー状態を確認する。
 
@@ -318,6 +358,8 @@ Settingsは言語、監視間隔・連続失敗閾値・監視ON/OFF・起動時
 Manifestのアプリ宣言はINTERNET、ACCESS_NETWORK_STATE、VIBRATE、WAKE_LOCK、POST_NOTIFICATIONS、SCHEDULE_EXACT_ALARM、FOREGROUND_SERVICE、FOREGROUND_SERVICE_MEDIA_PLAYBACK。通知はAndroid 13以降でruntime許可、exact alarmはAndroid 12以降で設定画面への導線を持つ。DND policy access、battery最適化除外を要求するUIはない。
 
 ## 14. テスト・ビルド
+
+実機試験の監視ON/OFF準備・復帰はandroidTestのMonitoringDevicePreparationへ集約する。通常のSettings ViewModel更新が返した予約／取消OperationをIOスレッドで待ち、ON時はunique名alertkun_mail_check_periodicのWorkInfoで現在世代・保険間隔・Periodic種別とENQUEUED/RUNNINGの1件を確認する。設定保存から確認まで合計10秒以内とし、未完了・取消済み・予約なし・重複・期限超過は試験失敗とする。OFF時は取消OperationとCANCELLED状態を確認する。DEVICE_MONITORING_CONFIRM_START / OPERATION_COMPLETED / WORK_INFO / CONFIRM_SUCCESS / CONFIRM_FAILUREは試験時だけ記録する。本番の予約は非同期のまま保ち、試験終了後も別プロセスでWorkManager DBの有効予約を確認する。
 
 JVMはJUnit 4で純粋ロジック、fake store / receiverで復旧・重複・priority・削除境界を検証する。AndroidX / Compose instrumentationでRoom migration・transaction、UI、MediaPlayer、振動、exact alarm / FGS / Stopを検証する。
 

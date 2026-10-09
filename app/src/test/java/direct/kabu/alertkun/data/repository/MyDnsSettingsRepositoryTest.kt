@@ -1,11 +1,52 @@
 package direct.kabu.alertkun.data.repository
 
 import direct.kabu.alertkun.security.CredentialStore
+import direct.kabu.alertkun.push.FcmTokenRegistrar
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 
 class MyDnsSettingsRepositoryTest {
+    @Test fun masterIdChangeDiscardsBearerWithBlankPasswordPreserved() = runBlocking {
+        var id = "old"
+        val credentials = MemoryCredentials()
+        credentials.save(MyDnsSettingsRepository.CREDENTIAL_KEY, "password")
+        credentials.save(FcmTokenRegistrar.DEVICE_TOKEN_KEY, "bearer")
+        MyDnsSettingsRepository(credentials, { id }, { id = it }).save("new", "")
+        assertNull(credentials.load(FcmTokenRegistrar.DEVICE_TOKEN_KEY))
+        assertEquals("password", credentials.load(MyDnsSettingsRepository.CREDENTIAL_KEY))
+    }
+
+    @Test fun passwordChangeDiscardsBearer() = runBlocking {
+        val credentials = MemoryCredentials()
+        credentials.save(MyDnsSettingsRepository.CREDENTIAL_KEY, "old")
+        credentials.save(FcmTokenRegistrar.DEVICE_TOKEN_KEY, "bearer")
+        MyDnsSettingsRepository(credentials, { "same" }, {}).save("same", "new")
+        assertNull(credentials.load(FcmTokenRegistrar.DEVICE_TOKEN_KEY))
+    }
+
+    @Test fun unchangedCredentialsPreserveBearer() = runBlocking {
+        val credentials = MemoryCredentials()
+        credentials.save(MyDnsSettingsRepository.CREDENTIAL_KEY, "same-password")
+        credentials.save(FcmTokenRegistrar.DEVICE_TOKEN_KEY, "bearer")
+        val repository = MyDnsSettingsRepository(credentials, { "same" }, {})
+        repository.save("same", "")
+        repository.save("same", "same-password")
+        assertEquals("bearer", credentials.load(FcmTokenRegistrar.DEVICE_TOKEN_KEY))
+    }
+
+    @Test fun bearerDeletionFailurePreventsPublishingChangedIdentity() = runBlocking {
+        var id = "old"
+        val credentials = object : CredentialStore {
+            override fun load(key: String) = if (key == FcmTokenRegistrar.DEVICE_TOKEN_KEY) "bearer" else "password"
+            override fun save(key: String, password: String) = Unit
+            override fun delete(key: String) { error("Storage failure") }
+        }
+        try { MyDnsSettingsRepository(credentials, { id }, { id = it }).save("new", ""); fail("Expected failure") }
+        catch (error: MyDnsSaveException) { assertEquals(MyDnsSaveFailure.STORAGE, error.kind) }
+        assertEquals("old", id)
+    }
+
     @Test fun savesAndReloadsIdWithoutPuttingPasswordInSettings() = runBlocking {
         var normalSetting = ""
         val credentials = MemoryCredentials()

@@ -21,6 +21,7 @@ data class ReceivedMail(
     val matchedRuleId: String?,
     /** Snapshot of the selected rule's color, not a reference to its current configuration. */
     val backgroundColor: MailBackgroundColor = MailBackgroundColor.DEFAULT,
+    val serverDeleteResolution: ServerDeleteResolution = ServerDeleteResolution.PENDING,
 )
 
 enum class MailProcessingState {

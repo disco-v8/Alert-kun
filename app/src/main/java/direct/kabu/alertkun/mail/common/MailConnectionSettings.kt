@@ -14,6 +14,7 @@ import java.security.cert.CertificateException
 import java.util.Properties
 import javax.net.ssl.SSLException
 import org.eclipse.angus.mail.util.SocketFetcher
+import org.eclipse.angus.mail.util.MailSSLSocketFactory
 
 /** Receive and explicit POP3 deletion use the same Angus TLS/trust/identity configuration. */
 internal object MailConnectionSettings {
@@ -44,15 +45,19 @@ internal object MailConnectionSettings {
     fun properties(account: MailAccount): Properties = properties(account.protocol).apply {
         if (account.protocol !in listOf(MailProtocol.POP3S, MailProtocol.IMAPS)) return@apply
         val prefix = "mail.${protocolName(account.protocol)}"
-        if (account.tlsValidationMode != TlsValidationMode.STRICT) {
+        if (account.tlsValidationMode in listOf(TlsValidationMode.CA_VALIDATED_NO_HOSTNAME, TlsValidationMode.INSECURE)) {
             put("$prefix.ssl.checkserveridentity", "false")
             remove("$prefix.ssl.hostnameverifier.class")
         }
-        if (account.tlsValidationMode == TlsValidationMode.PINNED_CERTIFICATE) {
+        if (account.tlsValidationMode == TlsValidationMode.SELF_SIGNED_ALLOWED) {
             val context = javax.net.ssl.SSLContext.getInstance("TLS").apply {
-                init(null, arrayOf(PinnedCertificateTrustManager(account.certificateFingerprint)), null)
+                init(null, arrayOf(ExpiryValidatedTrustManager()), null)
             }
             put("$prefix.ssl.socketFactory", context.socketFactory)
+            put("$prefix.socketFactory.fallback", "false")
+        } else if (account.tlsValidationMode == TlsValidationMode.INSECURE) {
+            // Scoped to this explicitly selected account. TLS remains enabled.
+            put("$prefix.ssl.socketFactory", MailSSLSocketFactory("TLS").apply { setTrustAllHosts(true) })
             put("$prefix.socketFactory.fallback", "false")
         } else {
             put("$prefix.ssl.socketFactory", caValidatedSocketFactory())
@@ -68,7 +73,6 @@ internal object MailConnectionSettings {
     fun classify(error: Throwable): MonitoringFailureKind {
         val chain = generateSequence(error) { it.cause?.takeUnless { cause -> cause === it } }.take(16).toList()
         chain.filterIsInstance<MailReceiverException>().firstOrNull()?.let { return it.failureKind }
-        chain.filterIsInstance<TlsCertificateException>().firstOrNull()?.let { return it.kind }
         if (chain.any { it is java.security.cert.CertificateExpiredException || it is java.security.cert.CertificateNotYetValidException }) return MonitoringFailureKind.CERTIFICATE_EXPIRED
         if (chain.any { it.message.orEmpty().contains("subject alternative", true) || it.message.orEmpty().contains("hostname", true) || it.message.orEmpty().contains("Can't verify identity", true) || it is java.security.cert.CertPathValidatorException && it.reason == java.security.cert.PKIXReason.INVALID_NAME }) return MonitoringFailureKind.HOSTNAME_MISMATCH
         if (chain.any { it is java.security.cert.CertPathValidatorException || it.javaClass.simpleName == "SunCertPathBuilderException" || it is CertificateException && it.message.orEmpty().contains("trust anchor", true) }) return MonitoringFailureKind.CERTIFICATE_UNTRUSTED

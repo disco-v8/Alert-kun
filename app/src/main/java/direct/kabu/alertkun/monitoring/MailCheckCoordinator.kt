@@ -65,7 +65,7 @@ class MailCheckCoordinator(
                 result.rule?.id, result.rule?.backgroundColor ?: MailBackgroundColor.DEFAULT)
         })
         receiver.deleteProcessedMessages(mailStore::findByRemoteId, now())
-        MailCheckResult(true, checked, received, if (selected == null) 0 else 1)
+        MailCheckResult(true, checked, received, if (selected == null) 0 else 1, selectedAlarm = selected?.event)
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (error: MailReceiverException) {

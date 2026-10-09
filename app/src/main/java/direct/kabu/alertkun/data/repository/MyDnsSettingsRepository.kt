@@ -1,6 +1,9 @@
 package direct.kabu.alertkun.data.repository
 
 import direct.kabu.alertkun.security.CredentialStore
+import direct.kabu.alertkun.push.FcmTokenRegistrar
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.first
@@ -51,8 +54,16 @@ class MyDnsSettingsRepository internal constructor(
                         }
                         val loaded = credentials.load(CREDENTIAL_KEY)
                         check(newPassword.isEmpty() || loaded == newPassword)
+                        val changed = previousId != masterId.trim() ||
+                            (newPassword.isNotEmpty() && (previousUnreadable || newPassword != previousPassword))
+                        // Invalidate before publishing a different identity. Never restore an old bearer on rollback.
+                        if (changed) {
+                            credentials.delete(FcmTokenRegistrar.DEVICE_TOKEN_KEY)
+                            check(credentials.load(FcmTokenRegistrar.DEVICE_TOKEN_KEY) == null)
+                        }
                         idWriteAttempted = true
                         writeMasterId(masterId.trim())
+                        if (changed && previousId == masterId.trim()) passwordChanges.tryEmit(Unit)
                         MyDnsSavedSettings(masterId.trim(), !loaded.isNullOrEmpty())
                     } catch (_: Exception) {
                         var rollbackFailed = false
@@ -77,5 +88,10 @@ class MyDnsSettingsRepository internal constructor(
     companion object {
         const val CREDENTIAL_KEY = "mydns_master_password_v1"
         private val saveMutex = Mutex()
+        private val passwordChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+        internal val gatewayCredentialChanges = passwordChanges.asSharedFlow()
+
+        /** Serializes auth/token writes with user credential saves without touching monitoring's mutex. */
+        internal suspend fun <T> withGatewayCredentials(block: suspend () -> T): T = saveMutex.withLock { block() }
     }
 }

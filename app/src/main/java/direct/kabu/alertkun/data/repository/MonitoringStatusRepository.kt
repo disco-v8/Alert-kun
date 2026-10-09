@@ -17,12 +17,16 @@ import direct.kabu.alertkun.model.MonitoringState
 import direct.kabu.alertkun.monitoring.monitoringDebugLog
 import direct.kabu.alertkun.monitoring.MailCheckTrigger
 import direct.kabu.alertkun.monitoring.BackupMonitoringPolicy
+import direct.kabu.alertkun.monitoring.MonitoringObservation
+import direct.kabu.alertkun.monitoring.ObservationSink
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 /** Durable execution status, intentionally separate from user-editable monitoring settings. */
-class MonitoringStatusRepository private constructor(private val store: DataStore<Preferences>, private val log: (String) -> Unit) {
-    constructor(context: Context) : this(context.applicationContext.settingsDataStore, { monitoringDebugLog(context, it) })
+class MonitoringStatusRepository private constructor(private val store: DataStore<Preferences>, private val log: (String) -> Unit,
+    private val observation: ObservationSink = { _, _ -> }) {
+    constructor(context: Context) : this(context.applicationContext.settingsDataStore, { monitoringDebugLog(context, it) },
+        { event, fields -> MonitoringObservation.record(context, event, *fields.toList().toTypedArray()) })
     val state = store.data.map { values ->
         MonitoringState(
             isMonitoring = values[SettingsRepository.ENABLED] ?: values[ENABLED] ?: false,
@@ -40,6 +44,10 @@ class MonitoringStatusRepository private constructor(private val store: DataStor
     }
 
     suspend fun current(): MonitoringState = state.first()
+    /** One read-only snapshot for receipt notifications; does not claim a successful mail check. */
+    internal suspend fun notificationSnapshot(): Pair<Boolean, Long> = store.data.first().let {
+        (it[SettingsRepository.ENABLED] ?: it[ENABLED] ?: false) to (it[GENERATION] ?: 0L)
+    }
     /** Display reference only: never changes success, generation or backup scheduling. */
     suspend fun recordFcmReceived(receivedAt: Long) {
         if (receivedAt <= 0) return
@@ -83,8 +91,10 @@ class MonitoringStatusRepository private constructor(private val store: DataStor
     /** Increments the generation before cancellation/enqueue work can race with an old worker. */
     suspend fun changeSchedule(enabled: Boolean, nextScheduledAt: Long?, scheduleKind: String? = null, backupIntervalMinutes: Int? = null): Long {
         var generation = 0L
+        var oldGeneration = 0L
         store.edit {
-            generation = (it[GENERATION] ?: 0L) + 1L
+            oldGeneration = it[GENERATION] ?: 0L
+            generation = oldGeneration + 1L
             it[GENERATION] = generation
             it[ENABLED] = enabled
             if (!enabled) it.remove(MonitoringHealthPreferences.observingSince)
@@ -93,6 +103,12 @@ class MonitoringStatusRepository private constructor(private val store: DataStor
             if (enabled && backupIntervalMinutes != null) it[BACKUP_INTERVAL] = backupIntervalMinutes else it.remove(BACKUP_INTERVAL)
         }
         log("status changeSchedule enabled=$enabled generation=$generation nextMs=$nextScheduledAt kind=$scheduleKind backupInterval=$backupIntervalMinutes")
+        MonitoringObservation.generation = generation
+        runCatching { observation(if (enabled) "MONITORING_ENABLED" else "MONITORING_DISABLED",
+            mapOf("oldGeneration" to oldGeneration, "newGeneration" to generation, "backupTargetMs" to nextScheduledAt,
+                "backupInterval" to backupIntervalMinutes)) }
+        runCatching { observation("GENERATION_CHANGED", mapOf("oldGeneration" to oldGeneration, "newGeneration" to generation,
+            "reason" to "CHANGE_SCHEDULE")) }
         return generation
     }
     suspend fun recordCheckStarted(startedAt: Long, expectedGeneration: Long) = store.edit {
@@ -190,7 +206,7 @@ class MonitoringStatusRepository private constructor(private val store: DataStor
         return claimed
     }
     companion object {
-        internal fun forStore(store: DataStore<Preferences>) = MonitoringStatusRepository(store, {})
+        internal fun forStore(store: DataStore<Preferences>, observation: ObservationSink = { _, _ -> }) = MonitoringStatusRepository(store, {}, observation)
         private val ENABLED = booleanPreferencesKey("monitoring_status_enabled")
         private val LAST_SUCCESS = longPreferencesKey("monitoring_last_success")
         private val LAST_FCM_RECEIVED = longPreferencesKey("monitoring_last_fcm_received")

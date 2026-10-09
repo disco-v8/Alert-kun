@@ -14,8 +14,14 @@ import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 
 class Converters {
+    @TypeConverter fun fromServerDeleteResolution(value: direct.kabu.alertkun.model.ServerDeleteResolution) = value.name
+    @TypeConverter fun toServerDeleteResolution(value: String) = direct.kabu.alertkun.model.ServerDeleteResolution.entries.firstOrNull { it.name == value } ?: direct.kabu.alertkun.model.ServerDeleteResolution.PENDING
     @TypeConverter fun fromTlsValidationMode(value: direct.kabu.alertkun.model.TlsValidationMode) = value.name
-    @TypeConverter fun toTlsValidationMode(value: String) = direct.kabu.alertkun.model.TlsValidationMode.entries.firstOrNull { it.name == value } ?: direct.kabu.alertkun.model.TlsValidationMode.STRICT
+    @TypeConverter fun toTlsValidationMode(value: String): direct.kabu.alertkun.model.TlsValidationMode {
+        val normalized = if (value == "PINNED_CERTIFICATE") "SELF_SIGNED_ALLOWED" else value
+        return direct.kabu.alertkun.model.TlsValidationMode.entries.firstOrNull { it.name == normalized }
+            ?: direct.kabu.alertkun.model.TlsValidationMode.STRICT
+    }
     @TypeConverter fun fromServerDeletePolicy(value: ServerDeletePolicy) = value.name
     @TypeConverter fun toServerDeletePolicy(value: String) = ServerDeletePolicy.entries.firstOrNull { it.name == value } ?: ServerDeletePolicy.NEVER
     @TypeConverter fun fromSoundType(value: AlarmSoundType) = value.name

@@ -21,6 +21,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import direct.kabu.alertkun.R
 import direct.kabu.alertkun.ui.common.SavedPasswordField
+import direct.kabu.alertkun.push.GatewayRegistrationKind
 
 @Composable
 fun MyDnsSettingsSection(viewModel: MyDnsSettingsViewModel = viewModel()) {
@@ -53,5 +54,12 @@ internal fun MyDnsSettingsContent(
         if (state.saved) Text(stringResource(R.string.mydns_saved), Modifier.testTag("mydns_save_status"))
         if (state.failed) Text(stringResource(if (state.rollbackFailed) R.string.mydns_rollback_failed else R.string.mydns_save_failed),
             Modifier.testTag("mydns_save_status"), color = MaterialTheme.colorScheme.error)
+        val gatewayError = when (state.gatewayResult) {
+            GatewayRegistrationKind.AUTHENTICATION_ERROR, GatewayRegistrationKind.NOT_CONFIGURED -> R.string.mydns_gateway_auth_failed
+            null, GatewayRegistrationKind.SUCCESS, GatewayRegistrationKind.SKIPPED -> null
+            else -> R.string.mydns_gateway_unavailable
+        }
+        if (gatewayError != null) Text(stringResource(gatewayError), Modifier.testTag("mydns_gateway_status"),
+            color = MaterialTheme.colorScheme.error)
     }
 }

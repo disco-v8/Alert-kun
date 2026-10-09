@@ -43,12 +43,18 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 
 ## 監視
 
+- 監視状態通知6004はFCM受信時の表示に加え、正常check結果で既存pollの採用AlarmEvent内容へ更新する。非一致は「異常なし」へ戻す。表示用selectedAlarmはメモリ内の成功結果だけで渡し、警報の再handoff・別候補選定・Room再評価を行わない。専用channelとサイレント判定を維持し、OFF・古い世代の結果で通知を復活させない。observabilityはNORMAL / RULE_MATCHとRECEIPT / CHECK_RESULT、Work IDだけで結果を追跡し、通知内容・件名・差出人・ルール名をログへ出さない。
+
+- FCM受信時の監視状態通知は専用channel alertkun_monitoring_status、固定ID 6004でpost / updateし、OnlyAlertOnceで更新時の再通知を抑える。警報・監視失敗・日次通知とは分離し、監視OFFでcancelする。channelの現在importance / sound / vibrationだけでサイレント相当を判断し、ユーザー設定を上書きしない。通知失敗・権限拒否で既存dispatchを止めず、成功記録・skip・予約を変更しない。永続ログへMONITORING_NOTIFICATION_POST / UPDATE / CANCEL等とFCM照合情報を記録し、既存priorityログを維持する。HIGH配送・deep Doze突破を保証しない。
+
+- filesDir/observabilityの永続観測ログはDebug / Release共通で1MiB×4ファイル以内。許可した非秘密metadataだけを記録し、任意payload・token・接続先・username・メール内容・例外messageを渡さない。Work IDでenqueue・Worker・接続を対応付け、skip時は既存判定の入力値を記録する。ログ失敗を監視へ伝播させず、観測のためのWakeLock・FGS・予約・通信や監視条件変更を追加しない。回収時に既存ログ・アプリデータを消さない。
+
 - Mainの「次回確認」は現在の主監視設定に有効なFCM受信時刻（未受信ならGateway登録／設定成功時刻）＋確認間隔から導出し、「yyyy/MM/dd HH:mm頃」で表示する。OFFは「なし」、有効な基準なしは「未定」。最終確認・WorkManager保険予約を流用せず、予定超過で自動繰り上げ・待機／遅延／異常表示をしない。異常検出は既存の保険・失敗通知が担当する。
 - Mainの「最終確認」は実メールチェック全体が正常完了した最新時刻とする。FCM受信・Worker起動・backup skip・削除失敗では更新しない。監視OFF時の明示的な手動確認成功も対象とする。
 - 主監視設定のrevisionはON/OFF・間隔・MasterID変更と同じDataStore editで更新する。保険用scheduleGenerationは起動／時計補正でも変わるため主監視のsession識別に流用しない。古いrevisionのFCM基準・Gateway成功応答を現在予定へ混入させず、予定時刻自体を永続化しない。token再登録がGatewayの送信基準を変えるかはサーバー仕様で確認し、推測で変更しない。
 - 現在のGatewayは同じtoken・intervalでの間隔登録も成功時に送信基準時刻をリセットする。token再登録も成功確認時刻を新しい初期基準にし、それ以前のFCM基準を解除する。成功後の受信は保持し、失敗時は既存正常基準を上書きしない。将来API変更時はこの前提を再確認する。
 
-- default network changeはINTERNET / VALIDATEDを補助情報として、1チェック全体で合計最大8秒の安定化待ちを行う。default networkが存在すれば実メール接続結果を最終判定とし、変更を観測した読み取り通信の一過性例外だけ最大1回retryする。auth / TLS / certificate / protocolエラーはretryしない。復旧して正常完了した途中のエラーをfailure countへ加算しない。Coordinator・警報・削除全体を再実行せず、メール保存・警報の重複を防ぎ、callbackを終了・キャンセル時に解除する。
+- default network changeはINTERNET / VALIDATEDを補助情報として、1チェック全体で安定化とretry間隔の待機を合わせて合計最大8秒を行う。default networkが存在すれば実メール接続結果を最終判定とし、読み取り通信の型で判定できる一時的ネットワーク例外だけ、networkChangedの有無によらず1チェック全体で最大2回retry（読み取り通信は最大3試行）する。retry間隔は3秒・5秒を基本とし共有待機予算の残りまで短縮、残り予算3秒未満では即retryせず失敗を返す。auth / TLS / certificate / protocolエラーはretryしない。復旧して正常完了した途中のエラーをfailure countへ加算しない。Coordinator・警報・削除全体を再実行せず、メール保存・警報の重複を防ぎ、callbackを終了・キャンセル時に解除する。
 
 - FCMを主監視、WorkManagerを保険・整合確認として使用する。常駐MonitoringService、dataSync FGS、監視用AlarmManager、長時間polling loop、独自長時間WakeLockを導入しない。
 - 1 Workerは1回のboundedなcheckをCoordinatorへ委譲する。FCM登録間隔は設定値、保険はmax(設定値, 15分)のunique PeriodicWork。OneTimeWorkはFCM・手動・起動時の単発確認用途だけとする。正確な時刻を保証しない。
@@ -63,7 +69,7 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 - 各有限サイクルはisLooping=false、完了・エラー・音源長timeoutでreleaseし、次サイクルを明示的に開始する。autoLoop metadata対策を維持する。
 - 継続開始はexact alarm → AlarmStartReceiver → mediaPlayback AlarmPlaybackService。監視へ流用しない。権限・通知・FGS開始失敗時の単発fallbackと、Audio Focus拒否時の音の開始抑止を維持する。
 - 新警報は既存警報を置換しqueueを作らない。Stopはpending開始、timer、残回数、player、振動、通知、Serviceを解除する。
-- soundTypeに対応する音源一覧・標準URIを維持し、種別変更時に旧soundUriを流用しない。有限回数・previewは種別ごとのusageを維持する。UNTIL_STOPPEDだけ選択音源を保持してUSAGE_ALARM / STREAM_ALARMを使い、Android 17の背景音声制約へ適合させる。端末の音量・DNDは変更しない。
+- soundTypeに対応する音源一覧・標準URIを維持し、種別変更時に旧soundUriを流用しない。有限回数・preview・UNTIL_STOPPEDの再生とAudio Focusは種別ごとのusage / legacy streamを使用する。UNTIL_STOPPEDは継続時間だけを決め、ALARMへの変換やOSの無音・背景音声制約回避に使わない。端末の音量・DNDは変更しない。
 - 継続警報のlive sessionはService activate/破棄に連動させ、Main上部の停止ボタンはactive時だけ表示する。Main・通知・確認ツールは共通AlarmController.stop()へ到達する。画面OFFでもsession・音・振動を継続し、画面OFF後の振動再設定はtoken照合でStop後・置換後に出力を復活させない。スワイプ消去はStopとせず通知だけを復元し、出力を再開始しない。pending/active中の同じメール・Ruleの再handoffは無視する。MediaPlayerのWakeLockは継続警報再生中だけで、監視へ流用しない。
 - 警報channelは音・振動なし、実出力はController。端末音量変更・DND回避をしない。
 - previewは共通waveformを1サイクルだけ使用し、初期表示で実行しない。選択変更で旧previewをcancel、NONE・画面離脱で停止する。
@@ -71,16 +77,20 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 
 ## サーバー削除
 
+- ReceivedMail.serverDeleteResolutionはPENDING / DELETED / ABSENTを区別する。完全なUIDL照合と正常QUIT応答確認後だけ解決状態を保存し、以後の候補から除外する。通信・UIDL・DELE・QUIT失敗や結果不明では候補を維持する。RECEIVED / PROCESSEDを流用せず、UIDLを観測ログへ記録しない。
+
 - Account単位ServerDeletePolicyの新規・migration・未知値はNEVERとし、明示保存済みpolicyは保持する。POP3 / POP3Sのみ対応し、IMAPへ曖昧に広げない。
 - ローカル保存、Rule評価、必要なpoll handoff、PROCESSED確定前に削除しない。
 - accountId + UIDLをRoomと照合し、PROCESSEDと有効な初回保存時刻・期限経過を証明できる場合だけ削除する。alertTriggeredを条件にしない。
-- lookup失敗、ID不一致、RECEIVED、不明・未来時刻、protocol状態不明、例外では残す。
+- lookup失敗、ID不一致、RECEIVED、不明・未来時刻、protocol状態不明、例外では残す。PROCESSED確定後に既存削除条件でローカル候補UIDLを抽出し、0件なら削除接続を省略する。候補取得失敗を0件扱いせず、候補がある場合もサーバーUIDL照合・全Room lookup・DELE/QUIT制御を省略しない。観測ログには候補件数とskip理由だけを記録し、UIDL・メール内容を出さない。
 - Connection Testでは一切削除しない。READ_ONLY受信・接続テストと専用削除セッションを分離する。
 - 全DELE成功後だけQUITで確定する。途中失敗・キャンセルではQUITを送らない。QUIT後の応答喪失では確定を断定しない。
 - 削除失敗後もPROCESSEDを保ち、次回再試行で再保存・再警報しない。
 - 日数基準は初回保存時刻。1ヶ月はUTCカレンダー加算であり固定30日へ無断変更しない。
 
 ## 認証・TLS・公開情報
+
+- Gateway一次認証はHTTPS /authへMasterID・MasterPwd・現在FCM tokenを送信する。deviceTokenはCredentialStoreのfcm_gateway_device_token_v1へ暗号化保存する。/set-intervalはAuthorization Bearer必須でbodyはfcmtoken / rcvintervalだけ。401時だけBearerを削除し、再認証と再試行は最大1回。401以外の障害でtokenを削除しない。MasterID / MasterPwd変更時は旧Bearerを破棄し、設定保存と認証・token保存を共通の専用mutexで保護する。秘密値・Authorization・FCM tokenの一部もログへ出さず、Bearer用UIや監視OFF解除APIを追加しない。
 
 - パスワード・token・秘密鍵・本文全文をログへ出さない。Room / DataStore / 設定JSONへパスワードを平文保存しない。
 - 保存済みパスワードをUIの実値へ戻さず、固定マスクを保存しない。空入力による既存秘密情報の維持を壊さない。
@@ -101,6 +111,7 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 - JVMはJUnit 4、Android / Room / ComposeはAndroidX instrumentation。app/src/testとapp/src/androidTestへ対象packageに合わせて置く。
 - 変更に応じて重複・RECEIVED復旧・二段階priority・handoff失敗・batch rollback・削除境界・接続テスト非削除・警報回数 / Stop / previewを検証する。
 - Windows rootで .\gradlew.bat test / assembleDebug / lint。必要なconnectedAndroidTestを接続端末で実行する。未実行を合格として報告しない。
+- 実機試験で監視ONへ復帰するときは共通MonitoringDevicePreparationを使い、設定ON・予約Operation完了・現在世代のunique Periodic backupがENQUEUED/RUNNINGで1件存在することを10秒以内に確認してから終了する。設定値だけで復旧成功とせず、試験終了後も別プロセスから予約の永続化を確認する。本番UIへ同期waitを追加しない。
 - 通信・削除の試験は削除専用Account・使い捨てメールで行い、本番メールを使用しない。
 - 利用者に見えるUI変更ではuser-guide.mdを確認・更新する。内部仕様変更ではarchitecture.md、厳守事項変更ではAGENTS.mdも更新する。
 - READMEは概要・入口、user-guideは利用方法、architectureは内部仕様、AGENTSは作業規約。詳細を大量複製しない。

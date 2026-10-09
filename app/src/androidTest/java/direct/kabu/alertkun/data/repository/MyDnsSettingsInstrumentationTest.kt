@@ -5,6 +5,7 @@ import android.content.ContextWrapper
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.test.core.app.ApplicationProvider
 import direct.kabu.alertkun.push.fcmRegistrationTargets
+import direct.kabu.alertkun.push.FcmTokenRegistrar
 import direct.kabu.alertkun.security.AndroidKeystoreCredentialStore
 import java.io.File
 import java.util.UUID
@@ -42,6 +43,13 @@ class MyDnsSettingsInstrumentationTest {
             val recreated = MyDnsSettingsRepository(SettingsRepository.forStore(store), AndroidKeystoreCredentialStore(isolated))
             assertEquals(MyDnsSavedSettings("test-master", true), recreated.read())
             recreated.save("test-master", "")
+            credentials.save(FcmTokenRegistrar.DEVICE_TOKEN_KEY, "private-test-bearer")
+            assertEquals("private-test-bearer", AndroidKeystoreCredentialStore(isolated).load(FcmTokenRegistrar.DEVICE_TOKEN_KEY))
+            val encryptedBearer = isolated.getSharedPreferences("alertkun_encrypted_credentials", Context.MODE_PRIVATE)
+                .getString(FcmTokenRegistrar.DEVICE_TOKEN_KEY, null)
+            assertFalse(encryptedBearer!!.contains("private-test-bearer"))
+            recreated.save("test-master", "")
+            assertEquals("private-test-bearer", credentials.load(FcmTokenRegistrar.DEVICE_TOKEN_KEY))
             assertEquals("private-test-password", credentials.load(MyDnsSettingsRepository.CREDENTIAL_KEY))
             assertFalse(store.data.first().asMap().values.any { it.toString().contains("private-test-password") })
             val encrypted = isolated.getSharedPreferences("alertkun_encrypted_credentials", Context.MODE_PRIVATE)
@@ -49,9 +57,11 @@ class MyDnsSettingsInstrumentationTest {
             assertNotNull(encrypted)
             assertFalse(encrypted!!.contains("private-test-password"))
             recreated.save("test-master", "replacement-test-password")
+            assertNull(credentials.load(FcmTokenRegistrar.DEVICE_TOKEN_KEY))
             assertEquals("replacement-test-password", credentials.load(MyDnsSettingsRepository.CREDENTIAL_KEY))
         } finally {
             credentials.delete(MyDnsSettingsRepository.CREDENTIAL_KEY)
+            credentials.delete(FcmTokenRegistrar.DEVICE_TOKEN_KEY)
             scope.coroutineContext[Job]!!.cancelAndJoin()
         }
         // Reopen the same file with a fresh DataStore, proving disk persistence.

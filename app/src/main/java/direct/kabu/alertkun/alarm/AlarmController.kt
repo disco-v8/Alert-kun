@@ -147,8 +147,8 @@ class AlarmController private constructor(context: Context) {
         lifecycle.start(AlarmMode.UNTIL_STOPPED)
         mutableSession.value = AlarmSession(alarm.event.mailId, alarm.event.ruleId, System.currentTimeMillis())
         debugLog("alarm session start mailId=${alarm.event.mailId}")
-        val attributes = AlarmSoundMapping.continuousAudioAttributes()
-        if (requestFocus(AlarmSoundType.ALARM, attributes) && !startSound(alarm.event, true, attributes)) {
+        val attributes = AlarmSoundMapping.audioAttributes(alarm.event.soundType)
+        if (requestFocus(alarm.event.soundType, attributes) && !startSound(alarm.event, true, attributes)) {
             stop("playback start failure")
             return false
         }

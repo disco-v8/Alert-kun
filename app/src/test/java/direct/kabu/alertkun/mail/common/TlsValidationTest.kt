@@ -49,12 +49,12 @@ class TlsValidationTest {
     }
 
     private fun connect(mode: TlsValidationMode, host: String, trusted: Boolean, fixture: Fixture = valid,
-        fingerprint: String? = null, expected: MonitoringFailureKind? = null) = runBlocking {
+        expected: MonitoringFailureKind? = null) = runBlocking {
         Pop3TestServer(socketFactory = fixture.server.serverSocketFactory).use { server ->
             val account = server.account(ServerDeletePolicy.IMMEDIATELY).copy(protocol = MailProtocol.POP3S,
-                host = host, tlsValidationMode = mode, certificateFingerprint = fingerprint)
+                host = host, tlsValidationMode = mode)
             val properties = MailConnectionSettings.properties(account).apply {
-                if (trusted && mode != TlsValidationMode.PINNED_CERTIFICATE) put("mail.pop3s.ssl.socketFactory", fixture.trustedClient.socketFactory)
+                if (trusted && mode in listOf(TlsValidationMode.STRICT, TlsValidationMode.CA_VALIDATED_NO_HOSTNAME)) put("mail.pop3s.ssl.socketFactory", fixture.trustedClient.socketFactory)
             }
             try {
                 val store = Session.getInstance(properties).getStore("pop3s")
@@ -84,30 +84,37 @@ class TlsValidationTest {
     @Test fun hostnameExceptionAcceptsMismatchWithValidCa() = connect(TlsValidationMode.CA_VALIDATED_NO_HOSTNAME, "127.0.0.1", true)
     @Test fun hostnameExceptionRejectsUnknownCa() = connect(TlsValidationMode.CA_VALIDATED_NO_HOSTNAME, "127.0.0.1", false, expected = MonitoringFailureKind.CERTIFICATE_UNTRUSTED)
     @Test fun hostnameExceptionRejectsExpiredLeaf() = connect(TlsValidationMode.CA_VALIDATED_NO_HOSTNAME, "127.0.0.1", true, expired, expected = MonitoringFailureKind.CERTIFICATE_EXPIRED)
-    @Test fun pinnedModeRejectsUnapprovedCertificate() = connect(TlsValidationMode.PINNED_CERTIFICATE, "localhost", false, expected = MonitoringFailureKind.CERTIFICATE_NOT_APPROVED)
-    @Test fun approvedPinAcceptsReceiveAndDeletionWithoutCaOrHostnameTrust() = connect(TlsValidationMode.PINNED_CERTIFICATE, "127.0.0.1", false, fingerprint = certificateFingerprint(valid.leaf))
-    @Test fun changedPinRejectsWithoutUpdatingAndOnlyExplicitReapprovalWorks() {
-        val old = certificateFingerprint(expired.leaf)
-        connect(TlsValidationMode.PINNED_CERTIFICATE, "localhost", false, fingerprint = old, expected = MonitoringFailureKind.CERTIFICATE_CHANGED)
-        assertEquals(old, certificateFingerprint(expired.leaf))
-        connect(TlsValidationMode.PINNED_CERTIFICATE, "localhost", false, fingerprint = certificateFingerprint(valid.leaf))
-        connect(TlsValidationMode.PINNED_CERTIFICATE, "localhost", false, fingerprint = certificateFingerprint(valid.leaf))
+    @Test fun selfSignedAllowedAcceptsWithoutTrustStore() = connect(TlsValidationMode.SELF_SIGNED_ALLOWED, "localhost", false)
+    @Test fun selfSignedAllowedRejectsHostnameMismatch() = connect(TlsValidationMode.SELF_SIGNED_ALLOWED, "127.0.0.1", false, expected = MonitoringFailureKind.HOSTNAME_MISMATCH)
+    @Test fun selfSignedAllowedRejectsExpiredCertificate() = connect(TlsValidationMode.SELF_SIGNED_ALLOWED, "localhost", false, expired, expected = MonitoringFailureKind.CERTIFICATE_EXPIRED)
+    @Test fun selfSignedAllowedDoesNotRequireApprovalBetweenConnections() {
+        connect(TlsValidationMode.SELF_SIGNED_ALLOWED, "localhost", false)
+        connect(TlsValidationMode.SELF_SIGNED_ALLOWED, "localhost", false)
     }
-    @Test fun pinnedModeAlsoRejectsExpiredCertificate() = connect(TlsValidationMode.PINNED_CERTIFICATE, "localhost", false, expired,
-        certificateFingerprint(expired.leaf), MonitoringFailureKind.CERTIFICATE_EXPIRED)
+    @Test fun insecureAcceptsCaCertificateWithoutPinOrHostnameMatch() = connect(TlsValidationMode.INSECURE, "127.0.0.1", false)
+    @Test fun insecureAcceptsMatchingCertificateWithoutRequiringCaTrust() = connect(TlsValidationMode.INSECURE, "localhost", false)
+    @Test fun insecureDoesNotValidateExpiry() = connect(TlsValidationMode.INSECURE, "127.0.0.1", false,
+        expired)
     @Test fun imapsAndPop3sApplyIdenticalAccountPolicy() {
         for (mode in TlsValidationMode.entries) for (protocol in listOf(MailProtocol.POP3S, MailProtocol.IMAPS)) {
             val account = MailAccount("a", "Fixture", protocol, "localhost", 995, "fixture", "key", false, null, true,
-                tlsValidationMode = mode, certificateFingerprint = certificateFingerprint(valid.leaf))
+                tlsValidationMode = mode)
             val prefix = "mail.${MailConnectionSettings.protocolName(protocol)}"
             val settings = MailConnectionSettings.properties(account)
-            assertEquals((mode == TlsValidationMode.STRICT).toString(), settings.getProperty("$prefix.ssl.checkserveridentity"))
+            assertEquals((mode in listOf(TlsValidationMode.STRICT, TlsValidationMode.SELF_SIGNED_ALLOWED)).toString(), settings.getProperty("$prefix.ssl.checkserveridentity"))
             assertTrue(settings["$prefix.ssl.socketFactory"] is SSLSocketFactory)
             assertNull(settings["$prefix.ssl.trust"])
+            assertEquals("true", settings.getProperty("$prefix.ssl.enable"))
+            assertEquals("false", settings.getProperty("$prefix.socketFactory.fallback"))
+            if (mode == TlsValidationMode.INSECURE) {
+                assertTrue((settings["$prefix.ssl.socketFactory"] as org.eclipse.angus.mail.util.MailSSLSocketFactory).isTrustAllHosts)
+            } else {
+                assertFalse(settings["$prefix.ssl.socketFactory"] is org.eclipse.angus.mail.util.MailSSLSocketFactory)
+            }
         }
     }
 
-    @Test fun imapsUsesAllThreeModesForActualAngusHandshakeAndAuthentication() {
+    @Test fun imapsUsesAllFourModesForActualAngusHandshakeAndAuthentication() {
         for (mode in TlsValidationMode.entries) {
             val listener = valid.server.serverSocketFactory.createServerSocket(0)
             val failure = java.util.concurrent.atomic.AtomicReference<Throwable?>()
@@ -135,11 +142,10 @@ class TlsValidationTest {
             }.apply { isDaemon = true; start() }
             try {
                 val account = MailAccount("a", "Fixture", MailProtocol.IMAPS,
-                    if (mode == TlsValidationMode.STRICT) "localhost" else "127.0.0.1", listener.localPort,
-                    "fixture", "key", false, null, true, tlsValidationMode = mode,
-                    certificateFingerprint = certificateFingerprint(valid.leaf))
+                    if (mode in listOf(TlsValidationMode.STRICT, TlsValidationMode.SELF_SIGNED_ALLOWED)) "localhost" else "127.0.0.1", listener.localPort,
+                    "fixture", "key", false, null, true, tlsValidationMode = mode)
                 val properties = MailConnectionSettings.properties(account).apply {
-                    if (mode != TlsValidationMode.PINNED_CERTIFICATE) put("mail.imaps.ssl.socketFactory", valid.trustedClient.socketFactory)
+                    if (mode in listOf(TlsValidationMode.STRICT, TlsValidationMode.CA_VALIDATED_NO_HOSTNAME)) put("mail.imaps.ssl.socketFactory", valid.trustedClient.socketFactory)
                 }
                 val store = Session.getInstance(properties).getStore("imaps")
                 try {

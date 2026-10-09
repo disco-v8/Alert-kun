@@ -127,17 +127,16 @@
     <string name="tls_validation">TLS証明書の検証</string>
     <string name="tls_strict">厳密に検証する（推奨）</string>
     <string name="tls_hostname">ホスト名の不一致を許可する</string>
-    <string name="tls_pinned">自己署名証明書を許可する</string>
-    <string name="tls_strict_description">証明書と接続先ホスト名の両方を検証します。</string>
-    <string name="tls_hostname_description">証明書自体は検証しますが、接続先ホスト名との一致は要求しません。</string>
-    <string name="tls_pinned_description">自己署名証明書を使用できます。初回接続時に証明書の確認が必要です。</string>
-    <string name="tls_strict_recommended">通常は「厳密に検証する」を使用してください。</string>
-    <string name="tls_fingerprint">SHA-256:\n%1$s</string>
-    <string name="tls_verify_fingerprint">サーバー管理者が確認したフィンガープリントと一致することを確認してください。承認後、接続テストと保存を行ってください。</string>
-    <string name="tls_trust_certificate">この証明書を信頼する</string>
+    <string name="tls_self_signed">自己署名証明書を許可する</string>
+    <string name="tls_insecure">検証しない</string>
     <string name="tls_ca_failed">証明書を信頼済みCAまで検証できませんでした。</string>
     <string name="tls_expired">証明書の有効期間外です。</string>
     <string name="tls_hostname_failed">証明書と接続先ホスト名が一致しません。</string>
-    <string name="tls_not_approved">自己署名証明書がまだ承認されていません。</string>
-    <string name="tls_certificate_changed">メールサーバーの証明書が変更されました。再確認・再承認してください。</string>
+    <string name="mydns_gateway_auth_failed">MyDNS.JPのMasterIDまたはMasterPwdを確認してください。</string>
+    <string name="mydns_gateway_unavailable">Gatewayに登録できませんでした。しばらくしてから再度お試しください。</string>
+    <string name="monitoring_status_channel_name">監視状態</string>
+    <string name="monitoring_status_title">AlertKun</string>
+    <string name="monitoring_status_date_pattern">yyyy年MM月dd日 HH:mm</string>
+    <string name="monitoring_status_no_issues">異常なし</string>
+    <string name="monitoring_status_silent_recommendation">※異常なし通知はサイレント通知にされることをおすすめします</string>
 </resources>

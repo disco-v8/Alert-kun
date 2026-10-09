@@ -10,6 +10,13 @@ import direct.kabu.alertkun.model.MailProcessingState
 import direct.kabu.alertkun.model.MonitoringSettings
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import java.io.File
+import java.util.UUID
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -30,9 +37,14 @@ class PersistenceInstrumentationTest {
         assertEquals(MailProcessingState.PROCESSED, saved.processingState); assertTrue(saved.alertTriggered); assertEquals("rule-1", saved.matchedRuleId)
     }
     @Test fun settingsDefaultsAndRangesWork() = runBlocking {
-        val repository = SettingsRepository(ApplicationProvider.getApplicationContext())
-        val defaults = repository.settings.first(); assertEquals(5, defaults.pollIntervalMinutes); assertEquals(7, defaults.mailRetentionDays); assertEquals(3, defaults.consecutiveFailureThreshold)
-        listOf(MonitoringSettings(pollIntervalMinutes = 0), MonitoringSettings(mailRetentionDays = 0), MonitoringSettings(consecutiveFailureThreshold = 100)).forEach { invalid -> try { repository.update(invalid); throw AssertionError("invalid value accepted") } catch (_: IllegalArgumentException) {} }
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val file = File(context.cacheDir, "defaults-${UUID.randomUUID()}.preferences_pb")
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val repository = SettingsRepository.forStore(PreferenceDataStoreFactory.create(scope = scope) { file })
+            val defaults = repository.settings.first(); assertEquals(5, defaults.pollIntervalMinutes); assertEquals(7, defaults.mailRetentionDays); assertEquals(3, defaults.consecutiveFailureThreshold)
+            listOf(MonitoringSettings(pollIntervalMinutes = 0), MonitoringSettings(mailRetentionDays = 0), MonitoringSettings(consecutiveFailureThreshold = 100)).forEach { invalid -> try { repository.update(invalid); throw AssertionError("invalid value accepted") } catch (_: IllegalArgumentException) {} }
+        } finally { scope.cancel(); file.delete() }
     }
     private fun mail(id: String, accountId: String) = ReceivedMailEntity(id, accountId, "remote", 1, null, "{}", null, null, false, MailProcessingState.RECEIVED, false, null)
 }

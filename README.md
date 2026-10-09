@@ -41,9 +41,13 @@ Debug APKはapp/build/outputs/apk/debug/app-debug.apkに生成されます。端
 
 ## 利用開始
 
-FCM Gateway端末登録には`app/google-services.json`をローカルに配置し、端末の設定画面でMyDNS.JP MasterIDを保存します。MasterPwdは暗号化して保存しますが、Gatewayへは送信しません。MyDNS.JPの認証・接続テストは未実装です。
+FCM Gateway端末登録には`app/google-services.json`をローカルに配置し、端末の設定画面でMyDNS.JP MasterIDとMasterPwdを保存します。初回はHTTPSでGatewayへ一次認証し、発行されたdeviceTokenをAndroid Keystoreで暗号化して保存します。以後はdeviceTokenのBearer認証を使用し、Bearer失効時だけMyDNS資格情報で再認証します。
 
 メールアカウントの接続テストと保存、ルール設定を行い、通知・継続警報に必要な権限を許可して監視を有効にします。FCMが設定間隔の主監視となり、WorkManagerは設定間隔と15分の大きい方を周期とするバックアップです。MasterID未設定でもバックアップ確認は継続します。詳しい操作は[user-guide.md](user-guide.md)を参照してください。
+
+監視中のFCM受信では専用の「異常なし」通知を1件更新します。音を避けたい場合はAndroidの通知設定で「監視状態」をサイレントにできます。警報・監視失敗・1日1回の通知とは別チャンネルです。
+
+メール確認でルールに一致すると、この同じ監視状態通知にも採用された警報内容を表示します。次の正常確認で一致がなければ「異常なし」に戻ります。
 
 ## Documentation
 

@@ -16,6 +16,9 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.material3.Text
+import androidx.compose.runtime.mutableStateOf
 import direct.kabu.alertkun.model.AlarmMode
 import direct.kabu.alertkun.model.AlarmSoundType
 import direct.kabu.alertkun.model.VibrationPattern
@@ -23,16 +26,21 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import org.junit.Rule
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 class AlarmOncePlaybackTest {
+    // Notification/ringtone audio on Android 17 needs a foreground user context, unlike alarm audio.
+    @get:Rule val visibleActivity = createComposeRule()
+    private val playbackLabel = mutableStateOf("AlertKun playback test")
     private val context = ApplicationProvider.getApplicationContext<Context>()
     private val controller = AlarmController.getInstance(context)
     private val fixture = File(context.cacheDir, "alarm-once-test.wav")
 
     @Before fun prepare() {
+        visibleActivity.setContent { Text(playbackLabel.value) }
         assertNull("Do not replace an existing live alarm", controller.pendingToken())
         shell("pm grant ${context.packageName} ${Manifest.permission.POST_NOTIFICATIONS}")
         if (Build.VERSION.SDK_INT >= 31) shell("appops set ${context.packageName} SCHEDULE_EXACT_ALARM allow")
@@ -68,7 +76,12 @@ class AlarmOncePlaybackTest {
     }
 
     @Test fun allSoundTypesPreserveOnceReleaseAndContinuousLooping() {
-        for (type in AlarmSoundType.entries) {
+        val listeningType = InstrumentationRegistry.getArguments().getString("continuousListeningType")
+        val continuousTypes = AlarmSoundType.entries.filter { listeningType == null || it.name == listeningType }
+        assertTrue("Unknown listening sound type", continuousTypes.isNotEmpty())
+        val listeningMs = InstrumentationRegistry.getArguments()
+            .getString("continuousListeningSeconds")?.toLongOrNull()?.coerceIn(3, 30)?.times(1_000) ?: 3_000L
+        for (type in if (listeningType == null) AlarmSoundType.entries else emptyList()) {
             assertEquals(AlarmDelivery.ONCE, controller.start(event(AlarmMode.ONCE).copy(soundType = type)).delivery)
             val once = player()!!
             assertFalse(once.isLooping)
@@ -77,8 +90,13 @@ class AlarmOncePlaybackTest {
             await { player() == null }
             assertThrows(IllegalStateException::class.java) { once.start() }
         }
-        for (type in AlarmSoundType.entries) {
-            controller.start(event(AlarmMode.UNTIL_STOPPED).copy(mailId = "continuous-$type", soundType = type))
+        for (type in continuousTypes) {
+            visibleActivity.runOnIdle { playbackLabel.value = "UNTIL_STOPPED: ${type.name}" }
+            visibleActivity.waitForIdle()
+            controller.start(event(AlarmMode.UNTIL_STOPPED).copy(
+                mailId = "continuous-$type", soundType = type,
+                soundUri = if (listeningType == null) fixture.toURI().toString() else null,
+            ))
             await(90_000) { controller.currentState() == AlarmState.ACTIVE && player() != null }
             val continuous = player()!!
             assertEquals(type, PendingAlarmStore(context).load()!!.event.soundType)
@@ -87,9 +105,13 @@ class AlarmOncePlaybackTest {
             if (Build.VERSION.SDK_INT >= 26) {
                 val focus = AlarmController::class.java.getDeclaredField("focusRequest")
                     .apply { isAccessible = true }.get(controller) as AudioFocusRequest
-                assertEquals(android.media.AudioAttributes.USAGE_ALARM, focus.audioAttributes.usage)
+                assertEquals(AlarmSoundMapping.usage(type), focus.audioAttributes.usage)
             }
-            SystemClock.sleep(1_300)
+            val audio = context.getSystemService(AudioManager::class.java)
+            val stream = AlarmSoundMapping.legacyStreamType(type)
+            Log.i("AlarmUsageTest", "UNTIL_STOPPED type=$type stream=$stream volume=${audio.getStreamVolume(stream)} muted=${audio.isStreamMute(stream)}")
+            SystemClock.sleep(listeningMs)
+            assertPlaybackUsage(continuous, type, AlarmMode.UNTIL_STOPPED)
             assertSame(continuous, player())
             assertTrue(continuous.isPlaying)
         }
@@ -121,7 +143,7 @@ class AlarmOncePlaybackTest {
     }
 
     private fun assertPlaybackUsage(playing: MediaPlayer, type: AlarmSoundType, mode: AlarmMode) {
-        val expected = if (mode == AlarmMode.UNTIL_STOPPED) "USAGE_ALARM" else when (type) {
+        val expected = when (type) {
             AlarmSoundType.ALARM -> "USAGE_ALARM"
             AlarmSoundType.NOTIFICATION -> "USAGE_NOTIFICATION"
             AlarmSoundType.RINGTONE -> "USAGE_NOTIFICATION_RINGTONE"

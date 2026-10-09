@@ -14,7 +14,6 @@ data class MailAccount(
     val enabled: Boolean,
     val serverDeletePolicy: ServerDeletePolicy = ServerDeletePolicy.NEVER,
     val tlsValidationMode: TlsValidationMode = TlsValidationMode.STRICT,
-    val certificateFingerprint: String? = null,
 )
 
 enum class MailProtocol {

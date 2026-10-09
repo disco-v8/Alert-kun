@@ -7,6 +7,7 @@ import direct.kabu.alertkun.model.MailProtocol
 import direct.kabu.alertkun.model.ReceivedMail
 import direct.kabu.alertkun.model.ServerDeletePolicy
 import direct.kabu.alertkun.monitoring.MonitoringFailureKind
+import direct.kabu.alertkun.monitoring.ObservationSink
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.IOException
@@ -22,21 +23,35 @@ import kotlinx.coroutines.withContext
  */
 internal class Pop3ServerDeletion(private val account: MailAccount, private val password: String,
     private val trace: (String) -> Unit = {},
-    private val socketProvider: (MailAccount) -> Socket = { MailConnectionSettings.openSocket(it) }) {
-    suspend fun deleteProcessed(lookup: suspend (String, String) -> ReceivedMail?, now: Long) = withContext(Dispatchers.IO) {
+    private val socketProvider: (MailAccount) -> Socket = { MailConnectionSettings.openSocket(it) },
+    private val observation: ObservationSink = { _, _ -> }) {
+    suspend fun deleteProcessed(lookup: suspend (String, String) -> ReceivedMail?, now: Long, candidates: Set<String> = emptySet()): Pair<Set<String>, Set<String>> = withContext(Dispatchers.IO) {
         if (!account.enabled || account.serverDeletePolicy == ServerDeletePolicy.NEVER ||
-            account.protocol !in listOf(MailProtocol.POP3, MailProtocol.POP3S)) return@withContext
+            account.protocol !in listOf(MailProtocol.POP3, MailProtocol.POP3S)) return@withContext emptySet<String>() to emptySet<String>()
         var phase = "connect_tls"
+        var connected = false
+        var connectStarted: Long? = null
+        fun observe(event: String, category: String? = null, exceptionClass: String? = null) {
+            runCatching { observation(event, mapOf("accountId" to account.id, "protocol" to account.protocol.name,
+                "operation" to "SERVER_DELETE", "elapsedMs" to connectStarted?.let { System.nanoTime() / 1_000_000L - it },
+                "category" to category, "exceptionClass" to exceptionClass)) }
+        }
         val setPhase: (String) -> Unit = { phase = it; trace("POP3 deletion stage=$it") }
         try {
             require(listOf(account.username, password).none { '\r' in it || '\n' in it })
             setPhase("connect_tls")
-            socketProvider(account).use { transport ->
+            connectStarted = System.nanoTime() / 1_000_000L
+            observe("MAIL_CONNECT_START")
+            val resolved = socketProvider(account).use { transport ->
+                connected = true
+                observe("MAIL_CONNECT_SUCCESS")
                 setPhase("greeting")
-                deleteInSession(transport, lookup, now, setPhase)
+                deleteInSession(transport, lookup, now, candidates, setPhase)
             }
             trace("POP3 deletion outcome=success")
+            resolved
         } catch (cancelled: CancellationException) {
+            observe("MAIL_CONNECT_CANCELLED")
             throw cancelled
         } catch (failure: Exception) {
             // Existing monitoring failure model: local PROCESSED records remain safe for retry.
@@ -44,12 +59,13 @@ internal class Pop3ServerDeletion(private val account: MailAccount, private val 
                 if (it == MonitoringFailureKind.SERVER_UNAVAILABLE) MonitoringFailureKind.PROTOCOL_ERROR else it
             }
             trace("POP3 deletion outcome=failure stage=$phase kind=$kind type=${failure.javaClass.simpleName}")
+            observe(if (connected) "MAIL_SESSION_FAILURE" else "MAIL_CONNECT_FAILURE", kind.name, failure.javaClass.simpleName)
             throw MailReceiverException(kind, failure)
         }
     }
 
     private suspend fun deleteInSession(socket: Socket, lookup: suspend (String, String) -> ReceivedMail?, now: Long,
-        setPhase: (String) -> Unit) {
+        candidates: Set<String>, setPhase: (String) -> Unit): Pair<Set<String>, Set<String>> {
         val reader = socket.getInputStream().bufferedReader(Charsets.US_ASCII)
         val writer = socket.getOutputStream().bufferedWriter(Charsets.UTF_8)
         expectOk(reader)
@@ -75,6 +91,10 @@ internal class Pop3ServerDeletion(private val account: MailAccount, private val 
                 throw IOException("Invalid or ambiguous POP3 UIDL listing")
             }
         }
+        val missing = candidates - uidls
+        runCatching { observation("SERVER_UIDL_MATCH", mapOf("accountId" to account.id,
+            "protocol" to account.protocol.name, "count" to uidls.size,
+            "matched" to (candidates.size - missing.size), "missing" to missing.size)) }
         val targets = mutableListOf<Int>()
         setPhase("lookup")
         for ((number, uidl) in entries) {
@@ -94,6 +114,7 @@ internal class Pop3ServerDeletion(private val account: MailAccount, private val 
         setPhase("quit")
         command(writer, "QUIT")
         expectOk(reader)
+        return targets.map { entries.getValue(it) }.toSet() to missing
     }
 
     private fun command(writer: BufferedWriter, command: String) {

@@ -6,11 +6,16 @@ import com.google.firebase.messaging.FirebaseMessaging
 import direct.kabu.alertkun.BuildConfig
 import direct.kabu.alertkun.data.repository.SettingsRepository
 import direct.kabu.alertkun.data.repository.MonitoringStatusRepository
+import direct.kabu.alertkun.data.repository.MyDnsSettingsRepository
+import direct.kabu.alertkun.security.AndroidKeystoreCredentialStore
+import direct.kabu.alertkun.monitoring.MonitoringObservation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -20,12 +25,17 @@ object FcmRegistrationCoordinator {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val registrationMutex = Mutex()
     private var started = false
+    private val mutableResult = MutableStateFlow<GatewayRegistrationKind?>(null)
+    val registrationResult = mutableResult.asStateFlow()
 
     @Synchronized
     fun start(context: Context) {
         if (started) return
         started = true
         val appContext = context.applicationContext
+        scope.launch {
+            MyDnsSettingsRepository.gatewayCredentialChanges.collect { acquireCurrentToken(appContext) }
+        }
         scope.launch {
             try {
                 val repository = SettingsRepository(appContext)
@@ -58,24 +68,35 @@ object FcmRegistrationCoordinator {
             debugLog("FCM token acquisition failed: empty token")
             return
         }
-        debugLog("FCM token acquired: ${maskedToken(token)}")
+        debugLog("FCM token acquired")
         val appContext = context.applicationContext
         scope.launch {
             try {
                 registrationMutex.withLock {
-                    val repository = SettingsRepository(appContext)
-                    val target = repository.fcmRegistrationTargets().first()
-                    if (!target.configured) {
-                        debugLog("MyDNS.JP MasterID is not configured")
-                        return@withLock
+                    MyDnsSettingsRepository.withGatewayCredentials {
+                        val repository = SettingsRepository(appContext)
+                        val target = repository.fcmRegistrationTargets().first()
+                        if (!target.configured) {
+                            debugLog("MyDNS.JP MasterID is not configured")
+                            mutableResult.value = GatewayRegistrationKind.SKIPPED
+                            return@withGatewayCredentials
+                        }
+                        val interval = target.intervalMinutes
+                        val generation = MonitoringStatusRepository(appContext).executionStatus().scheduleGeneration
+                        val result = FcmTokenRegistrar(AndroidKeystoreCredentialStore(appContext), { event, fields ->
+                            MonitoringObservation.record(appContext, event, "generation" to generation,
+                                *fields.toList().toTypedArray())
+                        }).register(target.masterId, token, interval)
+                        mutableResult.value = result.kind
+                        val completedAt = System.currentTimeMillis()
+                        if (result.kind == GatewayRegistrationKind.SUCCESS && repository.fcmRegistrationTargets().first() == target) {
+                            MonitoringStatusRepository(appContext).recordGatewayRegistrationSuccess(completedAt, target.revision)
+                            MonitoringObservation.record(appContext, "GATEWAY_INTERVAL_REGISTERED", "interval" to interval,
+                                "completedMs" to completedAt, "revision" to target.revision,
+                                "currentGeneration" to MonitoringStatusRepository(appContext).executionStatus().scheduleGeneration)
+                        }
+                        debugLog("Gateway registration: ${result.kind} HTTP=${result.httpStatus ?: "none"} rcvinterval=$interval")
                     }
-                    val interval = target.intervalMinutes
-                    val result = FcmTokenRegistrar().register(target.masterId, token, interval)
-                    val completedAt = System.currentTimeMillis()
-                    if (result.kind == GatewayRegistrationKind.SUCCESS && repository.fcmRegistrationTargets().first() == target) {
-                        MonitoringStatusRepository(appContext).recordGatewayRegistrationSuccess(completedAt, target.revision)
-                    }
-                    debugLog("Gateway registration: ${result.kind} HTTP=${result.httpStatus ?: "none"} rcvinterval=$interval")
                 }
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
@@ -83,10 +104,6 @@ object FcmRegistrationCoordinator {
             }
         }
     }
-
-    internal fun maskedToken(token: String): String =
-        if (token.length > 12) "${token.take(6)}...${token.takeLast(4)} len=${token.length}"
-        else "[masked] len=${token.length}"
 
     private fun debugLog(message: String) {
         if (BuildConfig.DEBUG) Log.d("AlertKunFcm", message)

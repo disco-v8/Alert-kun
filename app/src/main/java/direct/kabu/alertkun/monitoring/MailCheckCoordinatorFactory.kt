@@ -17,11 +17,12 @@ import direct.kabu.alertkun.security.AndroidKeystoreCredentialStore
 import kotlinx.coroutines.flow.first
 
 internal object MailCheckCoordinatorFactory {
-    suspend fun create(context: Context, network: NetworkStabilization): MailCheckCoordinator {
+    suspend fun create(context: Context, network: NetworkStabilization, observation: ObservationSink = { _, _ -> }): MailCheckCoordinator {
         val database = AlertKunDatabase.getInstance(context)
         val mails = MailRepository(database.receivedMailDao())
         val accounts = AccountRepository(database.accountDao()).accounts.first().filter { it.enabled }
-        val receiver = NetworkStabilizingMailReceiver(if (accounts.isEmpty()) DummyMailReceiver.instance else AccountMailReceiver(accounts, AndroidKeystoreCredentialStore(context)) {
+        val receiver = NetworkStabilizingMailReceiver(if (accounts.isEmpty()) DummyMailReceiver.instance else AccountMailReceiver(accounts, AndroidKeystoreCredentialStore(context), observation = observation,
+            localProcessedMails = mails::deleteCandidatesForAccount, resolveDeletes = mails::resolveDeletes) {
             monitoringDebugLog(context, it)
         }, network, accounts.any { it.protocol in listOf(direct.kabu.alertkun.model.MailProtocol.POP3, direct.kabu.alertkun.model.MailProtocol.POP3S)
             && it.serverDeletePolicy != direct.kabu.alertkun.model.ServerDeletePolicy.NEVER })

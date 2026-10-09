@@ -15,6 +15,22 @@ import kotlinx.coroutines.flow.Flow
 @Dao interface AccountDao { @Query("SELECT * FROM accounts") fun observeAll(): Flow<List<MailAccountEntity>>; @Query("SELECT * FROM accounts WHERE id = :id") suspend fun getById(id: String): MailAccountEntity?; @Upsert suspend fun upsert(entity: MailAccountEntity); @Query("DELETE FROM accounts WHERE id = :id") suspend fun delete(id: String) }
 @Dao interface RuleDao { @Query("SELECT * FROM rules ORDER BY priority ASC") fun observeAll(): Flow<List<AlertRuleEntity>>; @Query("SELECT * FROM rules WHERE id = :id") suspend fun getById(id: String): AlertRuleEntity?; @Upsert suspend fun upsert(entity: AlertRuleEntity); @Query("DELETE FROM rules WHERE id = :id") suspend fun delete(id: String) }
 @Dao interface ReceivedMailDao {
+    @Query("UPDATE received_mails SET serverDeleteResolution = :resolution WHERE accountId = :accountId AND remoteMessageId = :uidl AND processingState = 'PROCESSED' AND serverDeleteResolution NOT IN ('DELETED', 'ABSENT')")
+    suspend fun resolveDelete(accountId: String, uidl: String, resolution: direct.kabu.alertkun.model.ServerDeleteResolution): Int
+    @androidx.room.Transaction
+    suspend fun resolveDeletes(accountId: String, deleted: Set<String>, absent: Set<String>): Pair<Int, Int> {
+        require(deleted.intersect(absent).isEmpty())
+        var deletedCount = 0
+        var absentCount = 0
+        deleted.forEach { deletedCount += resolveDelete(accountId, it, direct.kabu.alertkun.model.ServerDeleteResolution.DELETED) }
+        absent.forEach { absentCount += resolveDelete(accountId, it, direct.kabu.alertkun.model.ServerDeleteResolution.ABSENT) }
+        return deletedCount to absentCount
+    }
+
+    @Query("SELECT * FROM received_mails WHERE accountId = :accountId AND processingState = 'PROCESSED' AND serverDeleteResolution NOT IN ('DELETED', 'ABSENT')")
+    suspend fun getDeleteCandidatesForAccount(accountId: String): List<ReceivedMailEntity>
+    @Query("SELECT * FROM received_mails WHERE accountId = :accountId AND processingState = 'PROCESSED'")
+    suspend fun getProcessedForAccount(accountId: String): List<ReceivedMailEntity>
     @Query("SELECT COUNT(*) FROM received_mails WHERE processingState = 'PROCESSED' AND alertTriggered = 1 AND receivedAtEpochMillis >= :windowStart AND receivedAtEpochMillis <= :windowEnd")
     suspend fun countTriggeredAlerts(windowStart: Long, windowEnd: Long): Int
     @androidx.room.Transaction

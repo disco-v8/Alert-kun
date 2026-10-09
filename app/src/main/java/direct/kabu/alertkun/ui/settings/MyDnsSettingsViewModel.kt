@@ -8,6 +8,8 @@ import direct.kabu.alertkun.data.repository.MyDnsSaveFailure
 import direct.kabu.alertkun.data.repository.MyDnsSettingsRepository
 import direct.kabu.alertkun.data.repository.SettingsRepository
 import direct.kabu.alertkun.security.AndroidKeystoreCredentialStore
+import direct.kabu.alertkun.push.FcmRegistrationCoordinator
+import direct.kabu.alertkun.push.GatewayRegistrationKind
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -22,6 +24,7 @@ data class MyDnsSettingsUiState(
     val saved: Boolean = false,
     val failed: Boolean = false,
     val rollbackFailed: Boolean = false,
+    val gatewayResult: GatewayRegistrationKind? = null,
 ) {
     override fun toString() = "MyDnsSettingsUiState(redacted)"
 }
@@ -33,9 +36,14 @@ class MyDnsSettingsViewModel(application: Application) : AndroidViewModel(applic
 
     init {
         viewModelScope.launch {
+            FcmRegistrationCoordinator.registrationResult.collect { result ->
+                mutableState.value = mutableState.value.copy(gatewayResult = result)
+            }
+        }
+        viewModelScope.launch {
             try {
                 val saved = repository.read()
-                mutableState.value = MyDnsSettingsUiState(masterId = saved.masterId, passwordSaved = saved.passwordSaved, loading = false)
+                mutableState.value = mutableState.value.copy(masterId = saved.masterId, passwordSaved = saved.passwordSaved, loading = false)
             } catch (error: Exception) {
                 if (error is CancellationException) throw error
                 mutableState.value = mutableState.value.copy(loading = false, failed = true)

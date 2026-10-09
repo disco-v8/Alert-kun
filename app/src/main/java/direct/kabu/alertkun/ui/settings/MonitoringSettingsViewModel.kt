@@ -17,13 +17,18 @@ import kotlinx.coroutines.launch
 class MonitoringSettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = SettingsRepository(application)
     val settings = repository.settings.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MonitoringSettings())
+    /** Handles for device-test cleanup; normal UI keeps the existing asynchronous behavior. */
+    internal var monitoringUpdateOperations: List<androidx.work.Operation> = emptyList()
+        private set
     fun update(poll: Int, threshold: Int, enabled: Boolean, checkImmediatelyOnAppStart: Boolean,
         healthNotificationEnabled: Boolean) = viewModelScope.launch {
+        monitoringUpdateOperations = emptyList()
         MailCheckWorker.executionMutex.withLock {
             repository.updateMonitoringSettings(poll, threshold, enabled, checkImmediatelyOnAppStart, healthNotificationEnabled)
             if (!healthNotificationEnabled) MonitoringHealthNotifier(getApplication()).cancel()
         }
-        if (enabled) MonitoringScheduler.reschedule(getApplication(), poll) else MonitoringScheduler.stop(getApplication())
+        monitoringUpdateOperations = if (enabled) listOf(MonitoringScheduler.reschedule(getApplication(), poll))
+            else MonitoringScheduler.stop(getApplication())
     }
     fun queueMatching() = viewModelScope.launch { DummyMailReceiver.instance.queueMatchingMail() }
     fun queueNonMatching() = viewModelScope.launch { DummyMailReceiver.instance.queueNonMatchingMail() }

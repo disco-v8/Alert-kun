@@ -17,6 +17,8 @@ class Pop3TestServer(uidls: List<String> = listOf("test-uid-1"), socketFactory: 
     @Volatile var rejectDeleteNumber: Int? = null
     @Volatile var disconnectOnDeleteNumber: Int? = null
     @Volatile var duplicateUidl = false
+    @Volatile var incompleteUidl = false
+    @Volatile var loseQuitResponse = false
     var subjects: Map<String, String> = emptyMap()
     @Volatile private var closed = false
     private val worker = thread(isDaemon = true, name = "pop3-test-server") {
@@ -56,7 +58,7 @@ class Pop3TestServer(uidls: List<String> = listOf("test-uid-1"), socketFactory: 
                 }
                 "UIDL" -> {
                     if (number != null) reply("+OK $number ${snapshot[number - 1]}")
-                    else { reply("+OK"); snapshot.forEachIndexed { index, uidl -> reply("${index + 1} ${if (duplicateUidl) snapshot.first() else uidl}") }; reply(".") }
+                    else { reply("+OK"); if (incompleteUidl) return; snapshot.forEachIndexed { index, uidl -> reply("${index + 1} ${if (duplicateUidl) snapshot.first() else uidl}") }; reply(".") }
                 }
                 "TOP", "RETR" -> { reply("+OK"); writer.write(message(checkNotNull(number))); writer.write(".\r\n"); writer.flush() }
                 "DELE" -> {
@@ -67,6 +69,7 @@ class Pop3TestServer(uidls: List<String> = listOf("test-uid-1"), socketFactory: 
                 "RSET" -> { deleted.clear(); reply("+OK") }
                 "QUIT" -> {
                     synchronized(messages) { deleted.forEach { messages.remove(snapshot[it - 1]) } }
+                    if (loseQuitResponse) return
                     reply("+OK committed")
                     return
                 }

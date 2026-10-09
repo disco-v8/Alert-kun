@@ -44,7 +44,10 @@ class MailCheckCoordinatorTest {
                 assertEquals(received.from, event.mailFrom); assertEquals(42L, event.receivedAtEpochMillis)
             } },
         )
-        assertTrue(check.check().success); assertTrue(finalized)
+        val result = check.check()
+        assertTrue(result.success); assertTrue(finalized)
+        assertEquals(high.id, result.selectedAlarm?.ruleId)
+        assertEquals(received.subject, result.selectedAlarm?.mailSubject)
     }
 
     @Test fun handoffErrorDoesNotFinalizeReceivedMail() = runBlocking {
@@ -59,7 +62,9 @@ class MailCheckCoordinatorTest {
             object : MailReceiver { override suspend fun fetchNewMessages() = emptyList<RemoteMail>(); override suspend fun fetchBody(remoteMail: RemoteMail): String? = null },
             object : MonitoringAlarmSink { override fun start(event: AlarmEvent) { error("handoff rejected") } },
         )
-        assertFalse(check.check().success); assertFalse(finalized)
+        val result = check.check()
+        assertFalse(result.success); assertFalse(finalized)
+        assertEquals(null, result.selectedAlarm)
     }
     @Test fun selectedHighestPriorityColorIsSnapshottedAndLaterRulesDoNotRecolorOldMail() = runBlocking {
         val stored = mutableListOf<ReceivedMail>()
@@ -94,6 +99,7 @@ class MailCheckCoordinatorTest {
         assertTrue(result.success)
         assertEquals(1, result.receivedCount)
         assertEquals(0, result.alertCount)
+        assertEquals(null, result.selectedAlarm)
         val saved = stored.single()
         assertEquals(remote.accountId, saved.accountId)
         assertEquals(remote.remoteMessageId, saved.remoteMessageId)

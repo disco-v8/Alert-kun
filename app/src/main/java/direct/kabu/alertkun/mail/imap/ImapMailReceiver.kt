@@ -5,11 +5,12 @@ import direct.kabu.alertkun.mail.common.MailReceiverException
 import direct.kabu.alertkun.mail.common.RemoteIdentity
 import direct.kabu.alertkun.model.MailAccount
 import direct.kabu.alertkun.monitoring.MonitoringFailureKind
+import direct.kabu.alertkun.monitoring.ObservationSink
 import jakarta.mail.Folder
 import jakarta.mail.Message
 import org.eclipse.angus.mail.imap.IMAPFolder
 
-class ImapMailReceiver(account: MailAccount, password: String) : JakartaMailReceiver(account, password) {
+class ImapMailReceiver(account: MailAccount, password: String, observation: ObservationSink = { _, _ -> }) : JakartaMailReceiver(account, password, observation) {
     override fun remoteMessageId(folder: Folder, message: Message): String {
         val imapFolder = folder as? IMAPFolder ?: throw MailReceiverException(MonitoringFailureKind.PROTOCOL_ERROR)
         val uidValidity = imapFolder.uidValidity

@@ -12,6 +12,7 @@ object ServerDeleteEligibility {
     fun eligible(policy: ServerDeletePolicy, accountId: String, uidl: String, mail: ReceivedMail?, now: Long): Boolean {
         if (policy == ServerDeletePolicy.NEVER || mail == null || accountId.isBlank() || uidl.isBlank()) return false
         if (mail.accountId != accountId || mail.remoteMessageId != uidl || mail.processingState != MailProcessingState.PROCESSED) return false
+        if (mail.serverDeleteResolution != direct.kabu.alertkun.model.ServerDeleteResolution.PENDING) return false
         val first = mail.receivedAtEpochMillis
         if (first <= 0 || first > now) return false
         val due = try {

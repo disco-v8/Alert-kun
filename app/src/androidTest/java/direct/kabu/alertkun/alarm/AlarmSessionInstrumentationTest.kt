@@ -32,7 +32,7 @@ class AlarmSessionInstrumentationTest {
         assertTrue(controller.canScheduleExactAlarms())
         assertTrue(controller.canPostNotifications())
         val event = AlarmEvent("session-instrumentation", "test-rule", "Session test", null, null,
-            VibrationPattern.PATTERN_2, AlarmMode.UNTIL_STOPPED, soundType = AlarmSoundType.NOTIFICATION)
+            VibrationPattern.PATTERN_2, AlarmMode.UNTIL_STOPPED, soundType = AlarmSoundType.ALARM)
         try {
             controller.start(event)
             await { controller.session.value != null && player() != null }
@@ -41,7 +41,7 @@ class AlarmSessionInstrumentationTest {
             val token = controller.pendingToken()!!
             val focus = AlarmController::class.java.getDeclaredField("focusRequest")
                 .apply { isAccessible = true }.get(controller) as AudioFocusRequest
-            assertEquals(AudioAttributes.USAGE_ALARM, focus.audioAttributes.usage)
+            assertEquals(AlarmSoundMapping.usage(event.soundType), focus.audioAttributes.usage)
             assertTrue(originalPlayer.isLooping)
             assertTrue(originalPlayer.isPlaying)
             await { notification() != null }

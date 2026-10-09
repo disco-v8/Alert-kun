@@ -134,17 +134,16 @@
     <string name="tls_validation">TLS certificate validation</string>
     <string name="tls_strict">Strict validation (recommended)</string>
     <string name="tls_hostname">Allow hostname mismatch</string>
-    <string name="tls_pinned">Allow self-signed certificate</string>
-    <string name="tls_strict_description">Validates both the certificate and the connection hostname.</string>
-    <string name="tls_hostname_description">Validates the certificate without requiring the connection hostname to match.</string>
-    <string name="tls_pinned_description">Allows self-signed certificates after explicit certificate approval.</string>
-    <string name="tls_strict_recommended">Use strict validation for normal operation.</string>
-    <string name="tls_fingerprint">SHA-256:\n%1$s</string>
-    <string name="tls_verify_fingerprint">Compare this fingerprint with one verified by the server administrator. After approval, test the connection and save.</string>
-    <string name="tls_trust_certificate">Trust this certificate</string>
+    <string name="tls_self_signed">Allow self-signed certificate</string>
+    <string name="tls_insecure">Do not validate</string>
     <string name="tls_ca_failed">The certificate could not be validated against a trusted CA.</string>
     <string name="tls_expired">The certificate is outside its validity period.</string>
     <string name="tls_hostname_failed">The certificate does not match the connection hostname.</string>
-    <string name="tls_not_approved">The self-signed certificate has not been approved.</string>
-    <string name="tls_certificate_changed">The mail server certificate has changed. Review and approve it again.</string>
+    <string name="mydns_gateway_auth_failed">Please check your MyDNS.JP MasterID and MasterPwd.</string>
+    <string name="mydns_gateway_unavailable">Unable to register with the Gateway. Please try again later.</string>
+    <string name="monitoring_status_channel_name">Monitoring status</string>
+    <string name="monitoring_status_title">AlertKun</string>
+    <string name="monitoring_status_date_pattern">MMM d, yyyy HH:mm</string>
+    <string name="monitoring_status_no_issues">No issues</string>
+    <string name="monitoring_status_silent_recommendation">We recommend setting these notifications to Silent in Android notification settings.</string>
 </resources>

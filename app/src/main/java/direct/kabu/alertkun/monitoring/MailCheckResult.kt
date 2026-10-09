@@ -1,5 +1,7 @@
 package direct.kabu.alertkun.monitoring
 
+import direct.kabu.alertkun.alarm.AlarmEvent
+
 data class MailCheckResult(
     val success: Boolean,
     val checkedCount: Int = 0,
@@ -7,6 +9,8 @@ data class MailCheckResult(
     val alertCount: Int = 0,
     val error: Throwable? = null,
     val failureKind: MonitoringFailureKind? = null,
+    /** Selected poll alarm after successful processing; notification display only, never another handoff. */
+    val selectedAlarm: AlarmEvent? = null,
 )
 
 enum class MonitoringFailureKind {
@@ -18,8 +22,6 @@ enum class MonitoringFailureKind {
     CERTIFICATE_UNTRUSTED,
     CERTIFICATE_EXPIRED,
     HOSTNAME_MISMATCH,
-    CERTIFICATE_NOT_APPROVED,
-    CERTIFICATE_CHANGED,
     AUTHENTICATION_FAILURE,
     PROTOCOL_ERROR,
     SERVER_UNAVAILABLE,
