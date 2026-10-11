@@ -83,7 +83,7 @@ class MailCheckWorker(appContext: Context, parameters: WorkerParameters) : Corou
                 val checkStarted = android.os.SystemClock.elapsedRealtime()
                 observe("CHECK_START", "generation" to expectedGeneration)
                 try {
-                    val result = DefaultNetworkMonitor(applicationContext).use { network ->
+                    val result = DefaultNetworkMonitor(applicationContext, connectionObservation).use { network ->
                         MailCheckCoordinatorFactory.create(applicationContext, NetworkStabilization(network,
                             { monitoringDebugLog(applicationContext, it) }, observation = connectionObservation), connectionObservation).check()
                     }

@@ -40,6 +40,21 @@ class ObservationLogTest {
         assertNull(ObservationFormat.hash(null))
     }
 
+    @Test fun restrictionMetadataRetainsUnknownsAndWorkCorrelationWithoutNetworkIdentity() {
+        val line = ObservationFormat.line("DEVICE_NETWORK_STATE", mapOf(
+            "workId" to "fixture", "observationPhase" to "CHECK_END", "elapsedRealtimeMs" to 123L,
+            "processId" to 456,
+            "restrictBackgroundStatus" to 3, "interactive" to false, "deviceIdle" to true,
+            "powerSave" to null, "cellular" to true, "wifi" to false, "networkBlocked" to true,
+            "ssid" to "private-network", "ipAddress" to "private-address", "callerPackage" to "untrusted"),
+            0, TimeZone.getTimeZone("UTC"))
+        for (field in listOf("workId=fixture", "processId=456", "restrictBackgroundStatus=3", "powerSave=null", "cellular=true", "networkBlocked=true")) {
+            assertTrue(line.contains(field))
+        }
+        assertFalse(line.contains("private-"))
+        assertFalse(line.contains("callerPackage="))
+    }
+
     @Test fun notificationResultMetadataIsRetainedWithoutDisplayContent() {
         for (state in listOf("NORMAL", "RULE_MATCH")) {
             val line = ObservationFormat.line("MONITORING_NOTIFICATION_UPDATE", mapOf(

@@ -196,6 +196,18 @@ Work IDをWorker・チェック・接続・networkイベントへ渡す。FCM me
 
 debug buildはadb exec-out run-as direct.kabu.alertkun tar -cf - files/observabilityでroot不要の回収が可能。Releaseにも記録するが、非debuggable buildのrun-as回収はできない。
 
+実チェックの既存DefaultNetworkMonitorへWork ID付きObservationSinkを渡し、CHECK_BEGIN / CHECK_ENDのDEVICE_NETWORK_STATEへprocessId、elapsedRealtime、interactive、deviceIdle、powerSave、batteryOptimizationExempt、restrictBackgroundStatus（ConnectivityManagerの数値：1=DISABLED、2=WHITELISTED、3=ENABLED）、metered、Wi-Fi / CELLULAR / VPNを記録する。restrictBackgroundStatusはnetpolicyのpolicy bit値とは別の値である。読取不能はnull。API 29以降の既存callbackのonBlockedStatusChangedはNETWORK_BLOCKED_STATUSへ記録する。blockedは可否の観測値であり原因・policy変更元を示さない。callback中に同期問い合わせを追加せず、network readiness・retry・skip・予約・通信・警報・失敗判定を変更しない。network callbackの登録は実チェック中だけに限定する。
+
+AlertKunApplication.onCreateはApplication contextへACTION_RESTRICT_BACKGROUND_CHANGEDの動的receiverを1回だけ登録する。RECEIVER_NOT_EXPORTEDでsystemから受信し、Intent extrasを参照・保存しない。登録後のprocess起動時はobservationPhase=PROCESS_START、対象イベント受信時はRESTRICT_BACKGROUND_CHANGEDとして同じDEVICE_NETWORK_STATEを既存の永続ログへ記録する。processIdで起動と後続イベントを対応付け、アプリ全体のイベントへWork IDを作らない。登録失敗は例外class名だけを記録し、process起動時のsnapshotは保存を試みる。取得・登録・ログ保存の失敗はアプリ起動や監視へ伝播させない。receiverはprocess生存中だけの受動観測であり、process維持、常駐Service、WakeLock、周期取得、通信、Work enqueue、監視状態や設定変更を追加しない。
+
+PC側の`tools/diagnostics/Observe-NetworkPolicy.ps1`は対象packageのUIDを毎session解決し、既定60秒間隔の時刻付きsample、関連タグの連続logcat（epoch）、UIDのnetpolicy状態・変更履歴、画面・回線・Doze・省電力状態、既存アプリログを別sessionへ保存する。初回正常取得はPOLICY_BASELINE、値の変化はPOLICY_CHANGE、OSの新しいpolicy履歴はPOLICY_HISTORY_CHANGEとして記録する。policy変化時に直前正常sampleへの参照、変化検知sample、次sampleへの参照と追加dumpを保存する。詳細dumpは5分以上の間隔に制限する。変化時刻は前回正常sampleの取得開始と今回sampleの取得終了の間であり、OS履歴に時刻が残ればそれを照合する。短時間で元に戻る変化はsampleだけでは検知できないため連続logcat・OS履歴も残す。PC接続・実行中だけ有効で、接続断・取得失敗・logcat再接続・停止を記録する。
+
+PC observerは端末ごとの排他lease、PAUSE / STOP制御と24時間の既定終了・256MiBのsession保存上限を持つ。logcatは10MiBを超えたら別fileへ切り替え、buffer末尾2000行を重複回収する。既存fileを消さず、停止・断線中の欠落を隠さない。ネットワーク設定・画面・idle・省電力・policy・logcat buffer/verbosityを変更せず、WakeLockも取得しない。人間へ端末を渡す前は`Control-NetworkPolicyObserver.ps1 -Action Pause`でADB/logcat停止のacknowledgementを待つ。完全に終了したsessionはResumeでは再開せず、新sessionで開始する。
+
+DynamicDenylistManagerは候補であり端末での実行を断定しない。PC側は変化時にSettings providerのdumpからManualDenylist / DynamicDenylistと対象packageを確認し、PRESENT / ABSENT / UNKNOWNを記録する。両sectionが読めない・timeout・permission denialの場合はUNKNOWN。ON表示やpolicy値だけからmanual/dynamicを決めない。公開AOSPのdumpメソッドがあるだけではPixelの公開取得経路がある証明にならない。取得できない場合は再発時のbugreportとSettings側の追加計測で確認する。
+
+PC側で非表示の別processとして開始する場合は`tools/diagnostics/Start-NetworkPolicyObserver.ps1 -Hours 24`を使用し、表示されたSessionとそのtimeline.jsonlで継続取得を確認する。`Control-NetworkPolicyObserver.ps1 -Session <Sessionの絶対path> -Action Pause / Resume / Stop`で制御する。Pause / Stopは収集側の停止応答を確認してから戻る。終了したsessionは再開できず、Startで新sessionを作成する。parser・取得失敗・一時的なpolicy履歴・denylist判別の確認は`Test-NetworkPolicyObserver.ps1`で行う。
+
 ### 成功記録とbackup skip
 
 DataStoreに最後の正常成功時刻、MailCheckTrigger、成功時のscheduleGeneration、最終試行成功flagを同じeditで保存する。試行開始時に成功flagをfalseにして、同じミリ秒でのキャンセル・process終了でも過去の成功を流用しない。正常な新着0件も成功。受信のみ、offline、通信・認証・TLS失敗、例外、キャンセルはFCM成功にしない。後続失敗や未完了checkがあれば古い成功をskipの根拠にしない。旧データにtrigger・backup intervalがない場合や未知値は安全に実行側へ倒す。
@@ -236,9 +248,7 @@ Angus Mail 2.0.4のPOP3Store.protocolConnectは一部EOFExceptionをcauseなし�
 
 CELLULAR上でFCMは正常受信しWorkerも起動するのに、READ_HEADERS前のDNS解決だけが失敗する場合は、UIDの `REJECT_METERED_BACKGROUND` / `METERED_USER_RESTRICTED` を確認すること。
 
-2026-10-09のPixel 7a実機試験では、設定画面の「バックグラウンドデータ」がONにもかかわらずUIDに `REJECT_METERED_BACKGROUND` が残っていた。
-
-「バックグラウンドデータ」を OFF → ON と切り替えることでpolicyが解除され、Wi-Fi OFF / CELLULARのみの状態で自然FCM → Worker → POP3S → CHECK_SUCCESS を確認した。
+設定画面がONでもUIDの `REJECT_METERED_BACKGROUND` が存在する場合がある。「バックグラウンドデータ」を OFF → ONにした後も、実policy解除・その維持とCELLULAR / 画面OFFでの自然FCM確認成功を別々に確認する。表示・単発成功だけで解決と判断しない。
 
 なお「モバイルデータの無制限利用」はData Saver例外設定であり、このpolicyとは別物。
 

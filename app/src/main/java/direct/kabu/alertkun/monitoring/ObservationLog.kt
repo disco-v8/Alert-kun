@@ -28,6 +28,9 @@ internal object ObservationFormat {
         "httpStatus", "retryNumber", "attempt", "maxAttempts", "retryWaitMs",
         "notificationId", "channelId", "importance", "silent", "soundPresent", "vibrationEnabled",
         "resultState", "notificationPhase", "count", "matched", "missing",
+        "observationPhase", "processId", "elapsedRealtimeMs", "interactive", "deviceIdle", "powerSave",
+        "batteryOptimizationExempt", "restrictBackgroundStatus", "metered", "wifi", "cellular", "vpn",
+        "blockedCallbackSupported", "networkBlocked",
     )
 
     fun line(event: String, values: Map<String, Any?>, now: Long, zone: TimeZone): String {

@@ -9,7 +9,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /** Registered only for an actual check, inside executionMutex; callbacks only publish snapshots. */
-internal class DefaultNetworkMonitor(context: Context) : DefaultNetworkSource, Closeable {
+internal class DefaultNetworkMonitor(
+    context: Context,
+    observation: ObservationSink = { _, _ -> },
+) : DefaultNetworkSource, Closeable {
+    private val deviceObservation = DeviceNetworkObservation(context, observation)
     private val manager = context.getSystemService(ConnectivityManager::class.java)
     private val log: (String) -> Unit = { monitoringDebugLog(context, it) }
     private val lock = Any()
@@ -48,9 +52,15 @@ internal class DefaultNetworkMonitor(context: Context) : DefaultNetworkSource, C
                 log("default network changed available=false")
             }
         }
+        override fun onBlockedStatusChanged(network: Network, blocked: Boolean) = synchronized(lock) {
+            if (closed || mutableState.value.networkId != network.toString()) return@synchronized
+            // This does not change readiness, retry decisions or monitoring results.
+            deviceObservation.blocked(blocked)
+        }
     }
 
     init {
+        deviceObservation.snapshot("CHECK_BEGIN")
         try {
             manager.registerDefaultNetworkCallback(callback)
             registered = true
@@ -67,6 +77,7 @@ internal class DefaultNetworkMonitor(context: Context) : DefaultNetworkSource, C
             closed = true
             registered
         }
+        deviceObservation.snapshot("CHECK_END")
         if (unregister) {
             try { manager.unregisterNetworkCallback(callback) }
             catch (error: RuntimeException) { log("default network callback unregister failed type=${error.javaClass.simpleName}") }
