@@ -195,7 +195,7 @@ try {
             } else { $line }
         }
         Save-Text "$directory\device-state.txt" ($safeState -join "`n")
-        $app = Invoke-Adb @('shell','run-as direct.kabu.alertkun tail -n 300 files/observability/monitoring-observation.log')
+        $app = Invoke-Adb @('shell','run-as direct.kabu.alertkun sh -c ''for f in files/observability/monitoring-observation*.log*; do [ -f "$f" ] && tail -n 300 "$f"; done | sort | tail -n 300''')
         Save-Text "$directory\app-observation.txt" $app.output
         Write-Event 'SAMPLE' @{ sample=$sampleNumber; startedUtc=$startedUtc; policyReadBeginUtc=$policyReadBeginUtc; policyReadEndUtc=$policyReadEndUtc; deviceClock=$clock.output.Trim(); clockOk=$clock.ok; uid=$appUid; policy=$value; netpolicyOk=$policy.ok; netpolicyError=$policy.error; stateOk=$state.ok; stateError=$state.error; appLogOk=$app.ok; appLogError=$app.error; logcatPart=$script:LogPart }
         if ($pendingAfter) {

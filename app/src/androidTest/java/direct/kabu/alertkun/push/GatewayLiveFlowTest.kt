@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import direct.kabu.alertkun.data.repository.SettingsRepository
 import direct.kabu.alertkun.monitoring.MonitoringDevicePreparation
+import direct.kabu.alertkun.monitoring.observationTestLines
 import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -20,15 +21,15 @@ class GatewayLiveFlowTest {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val settings = SettingsRepository(app)
         val before = settings.settings.first()
-        val log = File(app.filesDir, "observability/monitoring-observation.log")
-        val existingLines = log.readLines().size
+        val log = File(app.filesDir, "observability")
+        val existingLines = observationTestLines(log).size
         FcmRegistrationCoordinator.start(app)
         try {
             if (!before.monitoringEnabled) MonitoringDevicePreparation.apply(app, before, true)
             val timeoutAt = android.os.SystemClock.elapsedRealtime() + 9 * 60_000L
             var completed = false
             while (android.os.SystemClock.elapsedRealtime() < timeoutAt) {
-                val lines = log.readLines().drop(existingLines)
+                val lines = observationTestLines(log).drop(existingLines)
                 val end = lines.lastOrNull { it.contains(" WORKER_END ") && it.contains("trigger=FCM") && it.contains("checkResult=SUCCESS") }
                 if (end != null) {
                     val id = Regex("workId=([^ ]+)").find(end)!!.groupValues[1]

@@ -35,8 +35,8 @@ class MonitoringResultNotificationTest {
         val otherChannels = manager.notificationChannels.filter { it.id != MonitoringStatusNotifier.CHANNEL_ID }
             .associate { it.id to Triple(it.importance, it.sound, it.shouldVibrate()) }
         val events = mutableListOf<Pair<String, Map<String, Any?>>>()
-        val log = java.io.File(context.filesDir, "observability/monitoring-observation.log")
-        val logStart = if (log.exists()) log.readLines().size else 0
+        val log = java.io.File(context.filesDir, "observability")
+        val logStart = if (log.exists()) observationTestLines(log).size else 0
         var enabled = true
         val notifier = MonitoringStatusNotifier(context, { enabled to 123L }, observation = { event, fields ->
             events += event to fields
@@ -96,7 +96,7 @@ class MonitoringResultNotificationTest {
             assertTrue(events.any { it.first == "MONITORING_NOTIFICATION_UPDATE" && it.second["resultState"] == "RULE_MATCH" })
             assertTrue(events.any { it.first == "MONITORING_NOTIFICATION_UPDATE" && it.second["resultState"] == "NORMAL" && it.second["notificationPhase"] == "CHECK_RESULT" })
             assertFalse(events.toString().contains("fixture@example.invalid"))
-            val persisted = log.readLines().drop(logStart).filter { it.contains("trigger=INSTRUMENTATION") }.joinToString("\n")
+            val persisted = observationTestLines(log).drop(logStart).filter { it.contains("trigger=INSTRUMENTATION") }.joinToString("\n")
             assertTrue(persisted.contains("resultState=RULE_MATCH"))
             assertTrue(persisted.contains("resultState=NORMAL") && persisted.contains("notificationPhase=CHECK_RESULT"))
             assertFalse(persisted.contains("fixture@example.invalid"))

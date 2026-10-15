@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.LinkProperties
 import java.io.Closeable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,9 +37,12 @@ internal class DefaultNetworkMonitor(
             val changed = previous.networkId != network.toString()
             if (changed) mutableState.value = DefaultNetworkState(network.toString(), changeVersion = previous.changeVersion + 1)
             log("network available default network changed=$changed")
+            deviceObservation.callback("AVAILABLE", network, mutableState.value.networkId == network.toString())
         }
         override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = synchronized(lock) {
-            if (closed || mutableState.value.networkId != network.toString()) return@synchronized
+            if (closed) return@synchronized
+            deviceObservation.callback("CAPABILITIES_CHANGED", network, mutableState.value.networkId == network.toString(), capabilities)
+            if (mutableState.value.networkId != network.toString()) return@synchronized
             val internet = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             val validated = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
             mutableState.value = mutableState.value.copy(internet = internet, validated = validated)
@@ -46,6 +50,7 @@ internal class DefaultNetworkMonitor(
         }
         override fun onLost(network: Network) = synchronized(lock) {
             if (closed) return@synchronized
+            deviceObservation.callback("LOST", network, mutableState.value.networkId == network.toString())
             log("network lost currentDefault=${mutableState.value.networkId == network.toString()}")
             if (mutableState.value.networkId == network.toString()) {
                 mutableState.value = DefaultNetworkState(changeVersion = mutableState.value.changeVersion + 1)
@@ -53,9 +58,16 @@ internal class DefaultNetworkMonitor(
             }
         }
         override fun onBlockedStatusChanged(network: Network, blocked: Boolean) = synchronized(lock) {
-            if (closed || mutableState.value.networkId != network.toString()) return@synchronized
+            if (closed) return@synchronized
+            deviceObservation.callback("BLOCKED_STATUS_CHANGED", network, mutableState.value.networkId == network.toString(), blocked = blocked)
+            if (mutableState.value.networkId != network.toString()) return@synchronized
             // This does not change readiness, retry decisions or monitoring results.
             deviceObservation.blocked(blocked)
+        }
+        override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) = synchronized(lock) {
+            if (closed) return@synchronized
+            // Deliberately do not serialize LinkProperties (addresses, DNS, routes, domains).
+            deviceObservation.callback("LINK_PROPERTIES_CHANGED", network, mutableState.value.networkId == network.toString())
         }
     }
 

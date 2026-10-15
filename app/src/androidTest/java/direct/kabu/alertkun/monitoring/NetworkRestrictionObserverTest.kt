@@ -20,9 +20,7 @@ class NetworkRestrictionObserverTest {
     @Test fun applicationStartupPersistsCurrentProcessState() {
         assertTrue(context.applicationContext is AlertKunApplication)
         val directory = File(context.filesDir, "observability")
-        val logs = (0..3).map { index ->
-            File(directory, if (index == 0) "monitoring-observation.log" else "monitoring-observation.$index.log")
-        }.filter { it.exists() }.flatMap { it.readLines() }
+        val logs = observationTestLines(directory)
         assertTrue(logs.any { it.contains("DEVICE_NETWORK_STATE") &&
             it.contains("observationPhase=PROCESS_START") && it.contains("processId=${android.os.Process.myPid()}") })
     }
@@ -39,7 +37,7 @@ class NetworkRestrictionObserverTest {
                 observer.receiver.onReceive(context, Intent(ConnectivityManager.ACTION_RESTRICT_BACKGROUND_CHANGED)
                     .putExtra("token", "private-payload"))
             }
-            val lines = File(directory, "monitoring-observation.log").readLines()
+            val lines = observationTestLines(directory)
             assertEquals(1, lines.count { it.contains("NETWORK_RESTRICTION_OBSERVER_REGISTERED") })
             assertEquals(1, lines.count { it.contains("observationPhase=PROCESS_START") })
             assertEquals(1, lines.count { it.contains("observationPhase=RESTRICT_BACKGROUND_CHANGED") })

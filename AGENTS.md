@@ -47,7 +47,7 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 
 - FCM受信時の監視状態通知は専用channel alertkun_monitoring_status、固定ID 6004でpost / updateし、OnlyAlertOnceで更新時の再通知を抑える。警報・監視失敗・日次通知とは分離し、監視OFFでcancelする。channelの現在importance / sound / vibrationだけでサイレント相当を判断し、ユーザー設定を上書きしない。通知失敗・権限拒否で既存dispatchを止めず、成功記録・skip・予約を変更しない。永続ログへMONITORING_NOTIFICATION_POST / UPDATE / CANCEL等とFCM照合情報を記録し、既存priorityログを維持する。HIGH配送・deep Doze突破を保証しない。
 
-- filesDir/observabilityの永続観測ログはDebug / Release共通で1MiB×4ファイル以内。許可した非秘密metadataだけを記録し、任意payload・token・接続先・username・メール内容・例外messageを渡さない。Work IDでenqueue・Worker・接続を対応付け、skip時は既存判定の入力値を記録する。ログ失敗を監視へ伝播させず、観測のためのWakeLock・FGS・予約・通信や監視条件変更を追加しない。回収時に既存ログ・アプリデータを消さない。
+- filesDir/observabilityの永続観測ログはDebug / Release共通でrolling 15×24時間保持、総量64MiB以内とする。日別・同日8MiB超で分割し、期限境界日の有効行を早期削除しない。期限整理後に容量超過する場合だけ古いファイルから削除し、追記対象は保護する。旧形式は期限・容量条件まで保持する。許可した非秘密metadataだけを記録し、任意payload・token・接続先・username・メール内容・例外message・SSID・BSSID・IP・DNSアドレスを渡さない。既存check内callbackへ安全なnetwork変化を記録し、観測キャッシュを通信判断へ使用しない。Work IDでenqueue・Worker・接続を対応付け、skip時は既存判定の入力値を記録する。ログ失敗を監視へ伝播させず、観測のためのWakeLock・FGS・予約・通信や監視条件変更を追加しない。回収時に既存ログ・アプリデータを消さない。
 
 - Mainの「次回確認」は現在の主監視設定に有効なFCM受信時刻（未受信ならGateway登録／設定成功時刻）＋確認間隔から導出し、「yyyy/MM/dd HH:mm頃」で表示する。OFFは「なし」、有効な基準なしは「未定」。最終確認・WorkManager保険予約を流用せず、予定超過で自動繰り上げ・待機／遅延／異常表示をしない。異常検出は既存の保険・失敗通知が担当する。
 - Mainの「最終確認」は実メールチェック全体が正常完了した最新時刻とする。FCM受信・Worker起動・backup skip・削除失敗では更新しない。監視OFF時の明示的な手動確認成功も対象とする。

@@ -188,7 +188,9 @@ MONITORING_NOTIFICATION_POST / UPDATE等へresultState（NORMAL / RULE_MATCH）�
 
 ### 端末内永続観測ログ
 
-Debug / Releaseとも、既存処理のFCM受信・enqueue・Worker/mutex・skip判定値・チェック結果・アカウント別接続・network stabilization・監視世代変更・Gateway登録成功をfilesDir/observability/monitoring-observation.logへ記録する。1イベント1行、端末の現在timezone offset付きISO8601日時とevent / key=value形式。1ファイル最大1MiB、activeと.1～.3の計4ファイル（最大4MiB）をサイズでローテーションする。通常UI・権限・WakeLock・FGS・予約・通信は追加せず、監視条件へ使用しない。
+Debug / Releaseとも、既存処理のFCM受信・enqueue・Worker/mutex・skip判定値・チェック結果・アカウント別接続・network stabilization・監視世代変更・Gateway登録成功をfilesDir/observabilityへ記録する。1イベント1行、端末の現在timezone offset付きISO8601日時とevent / key=value形式。端末ローカル日付のmonitoring-observation-yyyy-MM-dd.logへ追記し、同日8MiB超の場合は番号付きファイルへ分割する。同日でも時計がファイル先頭より前へ戻った場合は別partへ書く。保持判定はcleanup時点から15×24時間で、境界時刻ちょうどの行は保持し、それより古い行を削除する。境界日のファイルは有効行を残して整理する。cleanupは初期化・日付変更・前回から1時間以上経過後の既存書き込み・容量超過が見込まれる追記前に行う。期限直後の即時削除や無書込期間中の削除のための専用スケジューラは追加しない。期限整理後も総量64MiBを超える場合は古いファイルから削除し、追記対象は削除しない。一時整理ファイルの書込分も上限へ算入し、削除不能等で容量を確保できなければ追加ログを保存せず監視を継続する。旧形式ファイルも期限・容量条件までは保持し、回収はディレクトリ全体を対象にする。通常UI・権限・WakeLock・FGS・予約・通信は追加せず、監視条件へ使用しない。
+
+DefaultNetworkMonitorの既存callback登録は実check内だけ、終了・キャンセル時に解除する。AVAILABLE / LOST / CAPABILITIES_CHANGED / LINK_PROPERTIES_CHANGED / BLOCKED_STATUS_CHANGEDをNETWORK_CALLBACKとしてWork IDとともに記録する。Network handle、transport、INTERNET / VALIDATED、metered、blocked、active networkとの一致とmonitor内の追跡対象との一致を含む。LOSTでは最大8 Networkの観測専用キャッシュから直近capabilityを出し、capabilitySourceでCURRENT / LAST_KNOWN / UNKNOWNを区別する。このキャッシュをDefaultNetworkState、安定化、retryへ渡さない。LinkProperties自体・SSID・BSSID・IP・DNSアドレスを出力しない。既存NETWORK_BLOCKED_STATUSも維持する。check間やprocess停止中のnetwork変化を記録する常時callbackは追加しない。
 
 小さい追記をprocess内で直列化し、イベントごとにcloseする。未書込キューやイベントごとのfsyncは使用しない。process再起動・rebootでファイルを初期化しないが、電源断中の最後の書込・ストレージ障害時の保存は保証しない。保存失敗は監視へ伝播させない。観測ディレクトリだけをbackup / device transferから除外する。
 

@@ -15,13 +15,13 @@ class ObservationStorageTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val dir = File(context.filesDir, "observation-storage-test-${UUID.randomUUID()}")
         try {
-            val first = RotatingObservationLog(dir, maxBytes = 256)
+            val first = RotatingObservationLog(dir, maxBytes = 256, maxTotalBytes = 1024)
             assertTrue(first.record("FCM_RECEIVED", mapOf("priority" to "NORMAL")))
-            val reopened = RotatingObservationLog(dir, maxBytes = 256)
+            val reopened = RotatingObservationLog(dir, maxBytes = 256, maxTotalBytes = 1024)
             assertTrue(reopened.record("WORKER_START", mapOf("trigger" to "SCHEDULED_WORK")))
-            assertEquals(2, File(dir, "monitoring-observation.log").readLines().size)
+            assertEquals(2, observationTestLines(dir).size)
             repeat(30) { assertTrue(reopened.record("WORKER_END", mapOf("runAttemptCount" to it))) }
-            assertEquals(4, dir.listFiles()!!.size)
+            assertTrue(dir.listFiles()!!.sumOf { it.length() } <= 1024)
             assertTrue(dir.listFiles()!!.all { it.length() <= 256 && it.readLines().all { line -> line.matches(Regex("\\S+(Z|[+-]\\d{2}:\\d{2}) [A-Z_]+.*")) } })
         } finally {
             dir.listFiles()?.forEach { it.delete() }

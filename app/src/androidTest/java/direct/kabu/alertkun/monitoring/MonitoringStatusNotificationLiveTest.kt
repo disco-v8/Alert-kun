@@ -30,7 +30,7 @@ class MonitoringStatusNotificationLiveTest {
         val before = settings.settings.first()
         val manager = app.getSystemService(NotificationManager::class.java)
         val notifier = MonitoringStatusNotifier(app)
-        val log = File(app.filesDir, "observability/monitoring-observation.log")
+        val log = File(app.filesDir, "observability")
         val otherChannels = manager.notificationChannels.filter { it.id != MonitoringStatusNotifier.CHANNEL_ID }
             .associate { it.id to Triple(it.importance, it.sound, it.shouldVibrate()) }
         var turnedOff = false
@@ -41,7 +41,7 @@ class MonitoringStatusNotificationLiveTest {
         suspend fun receiptAfter(start: Int, event: String, silent: Boolean): Notification {
             val timeoutAt = android.os.SystemClock.elapsedRealtime() + 9 * 60_000L
             while (android.os.SystemClock.elapsedRealtime() < timeoutAt) {
-                val lines = log.readLines().drop(start)
+                val lines = observationTestLines(log).drop(start)
                 val receipt = lines.indexOfFirst { it.contains(" FCM_RECEIVED ") && it.contains("action=CHECK_MAIL") }
                 val post = lines.indexOfFirst { it.contains(" $event ") && it.contains("silent=$silent") }
                 val request = lines.indexOfFirst { it.contains(" WORK_ENQUEUE_REQUEST ") && it.contains("trigger=FCM") }
@@ -66,7 +66,7 @@ class MonitoringStatusNotificationLiveTest {
             notifier.createChannel()
             val initial = manager.getNotificationChannel(MonitoringStatusNotifier.CHANNEL_ID)
             assertEquals("New channel starts at DEFAULT", NotificationManager.IMPORTANCE_DEFAULT, initial.importance)
-            val firstStart = log.readLines().size
+            val firstStart = observationTestLines(log).size
             FcmRegistrationCoordinator.start(app)
             monitoring(true)
             val first = receiptAfter(firstStart, "MONITORING_NOTIFICATION_POST", false)
@@ -90,7 +90,7 @@ class MonitoringStatusNotificationLiveTest {
             while (android.os.SystemClock.elapsedRealtime() < channelTimeout && manager.getNotificationChannel(MonitoringStatusNotifier.CHANNEL_ID).importance > NotificationManager.IMPORTANCE_LOW) delay(100)
             val silentChannel = manager.getNotificationChannel(MonitoringStatusNotifier.CHANNEL_ID)
             assertTrue(silentChannel.importance in NotificationManager.IMPORTANCE_MIN..NotificationManager.IMPORTANCE_LOW)
-            val secondStart = log.readLines().size
+            val secondStart = observationTestLines(log).size
             val second = receiptAfter(secondStart, "MONITORING_NOTIFICATION_UPDATE", true)
             assertTrue(second.`when` > first.`when`)
             val secondText = second.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
@@ -102,19 +102,19 @@ class MonitoringStatusNotificationLiveTest {
             val cancelTimeout = android.os.SystemClock.elapsedRealtime() + 5_000
             while (android.os.SystemClock.elapsedRealtime() < cancelTimeout && status() != null) delay(20)
             assertNull("Monitoring OFF cancels status", status())
-            val thirdStart = log.readLines().size
+            val thirdStart = observationTestLines(log).size
             monitoring(true)
             turnedOff = false
             receiptAfter(thirdStart, "MONITORING_NOTIFICATION_POST", true)
             // Exercise denial without revoking the user's OS permission; existing FCM work still executes.
-            val deniedStart = log.readLines().size
+            val deniedStart = observationTestLines(log).size
             val generation = MonitoringStatusRepository(app).executionStatus().scheduleGeneration
             MonitoringStatusNotifier(app, { true to generation }, { false }).onFcmReceived(System.currentTimeMillis(), "permission-test")
             MonitoringScheduler.runNow(app, MailCheckTrigger.FCM, "permission-test")
             val deniedTimeout = android.os.SystemClock.elapsedRealtime() + 60_000
             var continued = false
             while (android.os.SystemClock.elapsedRealtime() < deniedTimeout) {
-                val lines = log.readLines().drop(deniedStart)
+                val lines = observationTestLines(log).drop(deniedStart)
                 if (lines.any { it.contains(" MONITORING_NOTIFICATION_BLOCKED ") && it.contains("reason=PERMISSION_DENIED") } &&
                     lines.any { it.contains(" CHECK_SUCCESS ") && it.contains("trigger=FCM") }) {
                     continued = true
