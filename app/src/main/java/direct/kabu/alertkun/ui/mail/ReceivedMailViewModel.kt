@@ -21,7 +21,7 @@ class ReceivedMailViewModel @JvmOverloads constructor(
     application: Application,
     repository: MailRepository = MailRepository(AlertKunDatabase.getInstance(application).receivedMailDao()),
 ) : AndroidViewModel(application) {
-    // All persisted mail is visible, including non-alerts and pending recovery.
+    // Locally deleted content is excluded by Room; pending recovery remains visible and protected.
     val state = repository.mails
         .map { ReceivedMailUiState(mails = it, loading = false) }
         .catch { emit(ReceivedMailUiState(loading = false, loadFailed = true)) }

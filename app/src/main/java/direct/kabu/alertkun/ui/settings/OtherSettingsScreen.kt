@@ -117,6 +117,8 @@ fun OtherSettingsScreen(
                 Text(stringResource(R.string.check_immediately_on_app_start))
             }
             Button(onClick = { val poll = pollInterval.toIntOrNull(); val threshold = failureThreshold.toIntOrNull(); if (pollValid && thresholdValid) monitoringViewModel.update(poll!!, threshold!!, monitoringEnabled, checkImmediatelyOnAppStart, healthNotificationEnabled) }, enabled = pollValid && thresholdValid, modifier = Modifier.fillMaxWidth().testTag("monitoring_save")) { Text(stringResource(R.string.save_monitoring_settings)) }
+            HorizontalDivider()
+            LocalMailSettingsSection()
             HorizontalDivider(Modifier.testTag("alarm_test_divider"))
             Text(stringResource(R.string.developer_tools), Modifier.testTag("developer_tools"))
             Button(onClick = monitoringViewModel::queueMatching, modifier = Modifier.fillMaxWidth().testTag("queue_dummy_matching_mail")) { Text(stringResource(R.string.queue_dummy_matching_mail)) }

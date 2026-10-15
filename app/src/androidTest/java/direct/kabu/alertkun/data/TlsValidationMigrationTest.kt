@@ -41,7 +41,7 @@ class TlsValidationMigrationTest {
         val name = "tls-migration-${UUID.randomUUID()}.db"
         var database: AlertKunDatabase? = null
         fun open() = Room.databaseBuilder(context, AlertKunDatabase::class.java, name)
-            .addMigrations(AlertKunDatabase.MIGRATION_4_5, AlertKunDatabase.MIGRATION_5_6).build()
+            .addMigrations(AlertKunDatabase.MIGRATION_4_5, AlertKunDatabase.MIGRATION_5_6, AlertKunDatabase.MIGRATION_6_7).build()
         try {
             context.openOrCreateDatabase(name, Context.MODE_PRIVATE, null).use { db ->
                 db.execSQL("CREATE TABLE accounts (id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, protocol TEXT NOT NULL, host TEXT NOT NULL, port INTEGER NOT NULL, username TEXT NOT NULL, credentialKey TEXT NOT NULL, deleteAfterReceive INTEGER NOT NULL, trustedCertificateId TEXT, enabled INTEGER NOT NULL)")

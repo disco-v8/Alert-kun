@@ -1,6 +1,6 @@
-# AlertKun 内部設計
+# Alert-kun 内部設計
 
-この文書はAlertKunの現在の内部設計・動作仕様を記載する。操作方法は[user-guide.md](user-guide.md)、開発時の厳守事項は[AGENTS.md](AGENTS.md)、概要とビルドの入口は[README.md](README.md)を参照する。仕様変更時はコード・テストと一緒に更新する。
+この文書はAlert-kunの現在の内部設計・動作仕様を記載する。操作方法は[user-guide.md](user-guide.md)、開発時の厳守事項は[AGENTS.md](AGENTS.md)、概要とビルドの入口は[README.md](README.md)を参照する。仕様変更時はコード・テストと一緒に更新する。
 
 ## 1. 実装範囲と構成
 
@@ -21,6 +21,8 @@
 
 Composeはメール通信・Room・Keystore・ルール判定本体・警報制御本体を直接実装しない。ViewModelは操作と画面状態を調整し、処理本体はRepositoryや専用クラスへ委譲する。AlarmPermissionControlsなどのUIは権限操作のためにControllerの状態を参照する。
 
+監視ヘルス通知6003と監視状態通知6004の本文タップは、OPEN_MAIN actionとCLEAR_TOP | SINGLE_TOPでMainActivityを開く。新規起動・既存ActivityのonNewIntentの両方でトップ画面へ戻し、Composeのトップまでpopするためトップ画面を追加しない。サイレント設定や通知のルール一致表示にかかわらず同じ経路。警報通知5001 / 5005は既存OPEN_RECEIVED_MAIL actionとCLEAR_TOP | SINGLE_TOPを維持し、受信メール一覧へ進む。通知タップの再利用経路から監視起動処理を再呼出ししない。
+
 監視の主経路:
 
 FCM / WorkManager保険 → MailCheckWorker → MailCheckCoordinator → MailReceiver → Room保存 → RuleEngine → poll全体の候補選定 → AlarmController → Room処理確定 → POP3削除判定
@@ -39,11 +41,17 @@ rcvintervalは登録直前にSettingsRepositoryから現在のpollIntervalMinute
 
 永続観測ログへGATEWAY_AUTH_START / SUCCESS / FAILURE / RETRY、GATEWAY_SET_INTERVAL_START / SUCCESS / FAILUREを追加する。HTTP status、retry number、interval、generation、categoryだけを保存し、既存GATEWAY_INTERVAL_REGISTEREDと予定表示基準の更新条件は維持する。
 
+### アイコン資産
+
+原画はartwork/に保持する。Alert-kun-Master.pngをアプリの基準画像とし、LauncherはこのMasterから生成する。Manifestの@mipmap/ic_launcher / @mipmap/ic_launcher_roundを使用する。API 26以降は108dpのforeground/backgroundを持つAdaptive Icon、API 24～25はmdpi～xxxhdpiの48/72/96/144/192px PNGを使用する。foregroundはMasterを96dp相当で中央配置し、本体・目・足を中央66dpの安全領域に収める。背景は白、monochromeはMasterのキャラクターを表す既存の通常ピクト輪郭を余白付きで使用する。再生成はtools/artwork/New-LauncherIcons.ps1で行い、原画を変更しない。Launcherの動的切替は行わない。緑色のAlert-kun-Normal.png、赤い発報中のAlert-kun-RuleMatch.png、Alert-kun-Notify.pngは原画として保持し、表示には使用しない。
+
+通知small iconは白単色・透明背景の24dp VectorDrawable。ic_notification_normalは6003と通常の6004、ic_notification_rule_matchは5001 / 5005 / 6002とルール一致の6004で使用する。6004は既存の表示用selectedAlarmの有無だけで切り替え、結果選定・警報handoff・永続化に影響しない。ピクト原画の細かなにじみを除き、ルール一致版は小サイズでも分離する6本の光線とする。
+
 ## 2. 永続化
 
 ### Room
 
-AlertKunDatabaseの現在のschemaはv6。accounts / rules / received_mailsを保存する。Entityとdomain modelはmapperで分離する。enumは安定した名前で保存し、Android定数やCompose色値を保存しない。
+AlertKunDatabaseの現在のschemaはv7。accounts / rules / received_mailsを保存する。Entityとdomain modelはmapperで分離する。enumは安定した名前で保存し、Android定数やCompose色値を保存しない。
 
 | Migration | 追加内容 | 既存データの扱い |
 | --- | --- | --- |
@@ -52,7 +60,7 @@ AlertKunDatabaseの現在のschemaはv6。accounts / rules / received_mailsを�
 | 3 → 4 | accountsのserverDeletePolicy | NEVER。旧deleteAfterReceiveの値から削除を有効にしない |
 | 4 → 5 | accountsのtlsValidationMode / certificateFingerprint | STRICT / NULL。旧予約値から信頼を登録しない |
 
-1→6のmigrationを登録し、破壊的fallbackは使用しない。schema JSONはapp/schemas以下に置く。AlarmModeはTEXT列にONCE / THREE_TIMES / FIVE_TIMES / UNTIL_STOPPEDを保存する。
+1→7のmigrationを登録し、破壊的fallbackは使用しない。6→7はreceived_mailsへlocallyDeleted（既存行はfalse）を追加し、メール内容と重複防止情報を保持する。schema JSONはapp/schemas以下に置く。AlarmModeはTEXT列にONCE / THREE_TIMES / FIVE_TIMES / UNTIL_STOPPEDを保存する。
 
 POP3削除候補の解決状態はReceivedMail.serverDeleteResolution（PENDING / DELETED / ABSENT）に保存する。完全UIDL照合と正常QUIT応答確認後だけ、削除確定・サーバー不在のUIDLをRoom transactionで解決し、以後の候補から除外する。通信・UIDL・DELE・QUIT失敗や結果不明では候補を維持する。RECEIVED / PROCESSEDと独立し、5→6 migrationは既存データをPENDINGとして保持する。SERVER_UIDL_MATCH / DELETE_CANDIDATES_RESOLVEDは件数・理由だけを記録する。
 
@@ -62,7 +70,11 @@ ReceivedMailの重要な情報はid、accountId、remoteMessageId、receivedAtEp
 
 軽量設定とMonitoringStatusRepositoryの状態を保存する。確認間隔、連続失敗閾値、監視ON/OFF、起動時確認、言語に加え、確認開始・完了・成功時刻、次回target、scheduleGeneration、schedule種別、連続失敗・異常通知状態などを保持する。
 
-mailRetentionDaysはモデル・永続化・validationに存在し、default 7、範囲1～99。ただし現在、保存日数の設定UI、期限による一覧絞り込み、定期削除の呼び出しは存在しない。ReceivedMail一覧は保存済みの全件を表示する。retentionによる自動削除を実装済みとして扱わない。
+端末内メール削除は既存mailRetentionDays / mail_retention_daysだけを設定値に使い、defaultは7（1週間）。設定画面の「内部からメール削除」は、アカウントの「サーバーからメール削除」と同じServerDeletePolicy・ラベル・7選択肢を再利用する。保存値は-1=即削除、0=削除しない、1/7/10/15=経過日数、30=UTCカレンダー1ヶ月。未知の値は安全側で削除しない。サーバー側のポリシーと保存先・処理を共有せず、監視予約・Gateway登録を変更しない。
+
+LocalMailCleanupはFCM / WorkManager / 手動等の実チェック終了時、既存executionMutex内で呼ぶ。受信・enqueue・Worker skip・接続テストでは呼ばない。チェック開始時の端末ローカル時刻が属する毎時0分の時間帯について、DataStoreのlast_local_mail_cleanup_hourへ試行を先に記録し、同一時間帯の重複をプロセス再起動後も防ぐ。これは設定ではなく実行済み状態。チェックが時間帯を跨いでも開始時の時間帯に帰属する。失敗時もその時間帯は再実行せず、次の時間帯の実チェックへ委ねる。時計逆行時は記録済み時間帯より後になるまで再実行しない。新規スケジューラは追加しない。
+
+期限判定は実行時刻とreceivedAtEpochMillis（初回ローカル受信日時）を比較し、期限ちょうどを含む。1日は24時間、1ヶ月はUTCカレンダー加算。無効・未来日時と未処理RECEIVEDは保護する。Room transactionで期限到達済みPROCESSEDだけをlocallyDeleted=trueにし、差出人・headers・件名・本文・本文取得状態・Rule参照・背景色を消す。一覧observeAllはlocallyDeleted=falseだけを返す。accountId / remoteMessageId / 初回受信日時 / 処理済み状態 / サーバー削除解決状態と識別子を保持し、同じメールの再受信・再警報とサーバー削除再試行の破損を防ぐ。alertTriggeredは24時間ヘルス通知の件数集計用に保持する。削除済み最小記録は自動消去しない。削除はサーバーへ接続せず、失敗はLOCAL_MAIL_CLEANUP_FAILUREの例外classだけを記録し、監視の成功・失敗へ伝播しない。
 
 ### 認証情報
 
@@ -301,9 +313,9 @@ UI名は「アラーム回数」。domain / 保存列名は既存のAlarmMode / 
 | FIVE_TIMES | 5サイクル | 自動終了 |
 | UNTIL_STOPPED | 継続再生・repeat振動 | Stop |
 
-有限回数はAlarmControllerのprocess内処理で、継続Service / exact alarm経路へ入れない。FiniteAlarmSequenceで回数を明示的に数え、各サイクルでMediaPlayerを新規作成する。isLooping=false、完了・エラーlistenerでreleaseし、次サイクルを明示的に開始する。
+有限回数はAlarmControllerから既存AlarmPlaybackServiceを直接開始し、mediaPlayback FGS内でFiniteAlarmSequenceの回数を数える。有限回数にはexact alarmを使用しない。PendingAlarmStoreの既存AlarmEvent.alarmModeで回数を渡し、各サイクルでMediaPlayerを新規作成する。isLooping=false、完了listener・音源長timerでreleaseし、次サイクルを明示的に開始する。エラー時は残りのサイクルを破棄して終了する。
 
-autoLoop metadataにより完了listenerが来ない音源への対策として、各サイクルにMediaPlayer.durationのtimerを併用してreleaseする。音源に複数フレーズが入っていても音源全体で1サイクル。音と振動を同時に開始し、次サイクルは振動1サイクルも完了するまで待つ。音源を開けない場合も振動と回数終了処理は進める。プロセス終了・OS制限による有限回数の完遂保証はない。
+autoLoop metadataにより完了listenerが来ない音源への対策として、各サイクルにMediaPlayer.durationのtimerを併用してreleaseする。音源に複数フレーズが入っていても音源全体で1サイクル。音と振動を同時に開始し、次サイクルは振動1サイクルも完了するまで待つ。FGS開始後にAudio Focusを取得し、拒否時は音を開始せず有限回の振動だけを行う。完了・エラー・Stopでplayer、timer、振動、Focus、foreground、Serviceを解除する。有限ServiceはSTART_NOT_STICKYで、null Intentによる有限handoff再開は拒否する。プロセス終了・OS制限による完遂保証はない。
 
 通知channelは警報音・振動なし。実音はMediaPlayer、振動はVibratorで行う。有限警報の通知は通常Stop actionなしで残り、音・振動だけが自動終了する。新警報・Stopでは古いplayer、timer、振動、残回数を破棄する。
 
@@ -311,7 +323,7 @@ autoLoop metadataにより完了listenerが来ない音源への対策として�
 
 新規の自動開始経路はAlarmController → AlarmManager exact alarm → AlarmStartReceiver → AlarmPlaybackService。exact alarmは継続警報開始用だけで、監視scheduleには使用しない。AlarmPlaybackServiceは鳴動中だけのmediaPlayback FGSであり、監視や受信を担当しない。
 
-SCHEDULE_EXACT_ALARM、通知許可・channel有効状態等を確認する。権限不足やFGS開始失敗時は単発出力と説明通知へ退避し、通知の「警報を開始」からユーザー操作で開始できる経路を用意する。継続開始時のAudio Focus取得が拒否された場合は音を開始せず、振動とServiceは継続する。Workerはhandoff後に終了する。
+SCHEDULE_EXACT_ALARM、通知許可・channel有効状態等を確認する。権限不足やFGS開始失敗時は、全APIで直接MediaPlayerへ戻さず、説明通知と有限回の振動へ退避する。有限警報は指定回数、継続警報は1サイクルの振動を行い、通知の「警報を開始」からユーザー操作で同じモードのService開始を再試行できる。継続開始時のAudio Focus取得が拒否された場合は音を開始せず、振動とServiceは継続する。Workerはhandoff後に終了する。有限回の直接起動もAndroidの背景FGS開始制限を受け、HIGH FCMの一時許可などが終了していれば拒否され得る。
 
 PendingAlarmStoreはtokenと最新AlarmEventを保持し、古いtokenの開始を拒否する。新警報で既存出力を置換し、queueを作らない。Stop actionはpending exact alarm、pending情報、音、振動、通知、Serviceを解除する。Serviceは自身の起動・foreground管理を担当し、実出力は同じAlarmControllerへ委譲する。プロセス・端末再起動後の無条件な継続再開は保証しない。
 
@@ -319,7 +331,7 @@ AlarmController.sessionはServiceのactivateで公開するStateFlow<AlarmSessio
 
 同じメールID・Rule IDのUNTIL_STOPPED再handoffはpending/active中に無視する。別メールの警報は現在の出力を解放して置換し、実行中Serviceを再利用する。FCM・Workerにはセッション制御を置かない。通知は既存HIGH channelのongoing + Stop action。Android 14以降はongoingでもスワイプ可能な場合があるため、deleteIntentでactive時だけ通知を復元する。音・振動は再startしない。通知許可取消などで復元不能でもMain画面のStopを残す。
 
-継続再生だけMediaPlayer.setWakeMode(PARTIAL_WAKE_LOCK)を使用する。playerの停止・解放に連動し、画面を点灯させず、監視WorkerにWakeLockを追加しない。継続playerのエラー・予期しない完了は共通Stopで全出力・Service・通知・sessionを解除する。Audio Focusによる中断・端末音量・DNDなどOSの音声制御には従う。
+FGS内のMediaPlayerは有限・継続ともsetWakeMode(PARTIAL_WAKE_LOCK)を使用する。playerの停止・解放に連動し、画面を点灯させず、監視WorkerにWakeLockを追加しない。継続playerのエラー・予期しない完了は共通Stopで全出力・Service・通知・sessionを解除する。Audio Focusによる中断・端末音量・DNDなどOSの音声制御には従う。観測ログには警報専用のランダムなalarmToken、mode、soundType、回数、Focus取得結果、FGS開始成否・終了、再生開始・完了・エラーを記録し、メール内容・Rule名・音源URIは記録しない。
 
 電源操作によるscreen offではAndroidがALARM振動もキャンセルする場合がある。ServiceだけがACTION_SCREEN_OFFを購読し、300ms後に一度、現在のtokenがまだactiveなら同じ振動出力を再設定する。音・focus・session・通知を再開始せず、Service破棄でcallbackを解除する。token照合によりStop後・置換後の古いcallbackは出力を復活させない。自然なscreen timeoutと手動screen offの両方でsessionは解除しない。
 
@@ -333,7 +345,7 @@ AlarmController.sessionはServiceのactivateで公開するStateFlow<AlarmSessio
 
 AlarmSoundMappingでAndroid定数へ変換する。soundUri指定があれば使用し、未指定・開けない場合はそのカテゴリのAndroid標準URIへfallbackする。種別変更時はUIで旧soundUriをnullへ戻す。picker結果は起動時の種別と現在種別が一致する場合のみ反映する。
 
-表のusageは有限回数・preview・UNTIL_STOPPEDの全てに適用する。soundTypeは再生用途・音源URI・カテゴリfallback・Audio Focus（API 24～25は種別ごとのlegacy stream）を決め、alarmModeは継続時間だけを決める。UNTIL_STOPPEDでもALARMへ強制変換しない。通知・着信・アラームそれぞれのAndroid設定に従い、端末設定は変更しない。CONTENT_TYPE_SONIFICATIONと有限回数のAudio Focus非要求を維持する。
+表のusageは有限回数・preview・UNTIL_STOPPEDの全てに適用する。soundTypeは再生用途・音源URI・カテゴリfallback・Audio Focus（API 24～25は種別ごとのlegacy stream）を決め、alarmModeは継続時間だけを決める。UNTIL_STOPPEDでもALARMへ強制変換しない。通知・着信・アラームそれぞれのAndroid設定に従い、端末設定は変更しない。CONTENT_TYPE_SONIFICATIONを維持し、有限回数・継続ともFGS開始後にFocusを要求する。Android 17 / targetSdk 37では背景FGSのWIU条件も適用され、許可済みexact alarm権限とUSAGE_ALARMの組合せはWIU条件の例外となる。これはFGS自体や背景起動制限の免除ではなく、通知・着信用途へも一般化しない。
 
 Android 17 / target 37では、FCM等から始まるFGSがwhile-in-use能力を持たない場合、通知・着信用途の背景音声やAudio FocusをOSが抑止し得る。exact alarm権限の音声例外はUSAGE_ALARMだけに適用される（[Android公式仕様](https://developer.android.com/about/versions/17/changes/bg-audio)）。この制約を音種別の変更で回避しない。Focus拒否時も既存の無音session・通知・振動・Stopを維持する。
 
@@ -388,4 +400,4 @@ Windowsのリポジトリrootから実行:
 
 ## 15. 未対応機能
 
-現在未対応なのは、JSON Export / Import、保存期限による自動purgeと設定UI、メール本文詳細・添付表示、IMAP削除、独自boot時reconcile、公開release配布フロー。OAuth専用の認可UIはない。ライセンスは未選定でLICENSEファイルもない。
+現在未対応なのは、JSON Export / Import、メール本文詳細・添付表示、IMAP削除、独自boot時reconcile、公開release配布フロー。OAuth専用の認可UIはない。ライセンスは未選定でLICENSEファイルもない。

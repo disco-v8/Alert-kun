@@ -87,7 +87,7 @@ class MonitoringResultNotificationTest {
                     val next = check.check()
                     assertTrue(next.success); assertNull(next.selectedAlarm); assertEquals(1, handoffs)
                     notifier.onCheckCompleted(System.currentTimeMillis(), next.selectedAlarm, 123L, MailCheckTrigger.SCHEDULED_WORK, "fixture-normal")
-                    await { status()?.extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString() == "AlertKun" }
+                    await { status()?.extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString() == context.getString(R.string.monitoring_status_title) }
                     assertTrue(status()!!.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString().contains(context.getString(R.string.monitoring_status_no_issues)))
                     assertTrue(manager.activeNotifications.any { it.id in setOf(AlarmController.NOTIFICATION_ID, AlarmController.PLAYBACK_NOTIFICATION_ID) })
                     assertFalse(server.commands.any { it.startsWith("DELE") })

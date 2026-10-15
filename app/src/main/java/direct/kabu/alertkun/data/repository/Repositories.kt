@@ -43,7 +43,7 @@ class SettingsRepository private constructor(private val store: androidx.datasto
     val appLanguage: Flow<AppLanguage> = store.data.map { p -> p[LANGUAGE]?.let { AppLanguage.valueOf(it) } ?: AppLanguage.ENGLISH }
     suspend fun update(settings: MonitoringSettings) {
         require(settings.pollIntervalMinutes in 1..1500)
-        require(settings.mailRetentionDays in 1..99)
+        require(settings.mailRetentionDays in -1..99)
         require(settings.consecutiveFailureThreshold in 1..99)
         store.edit { p ->
             invalidateFcmScheduleIfChanged(p, settings.pollIntervalMinutes, settings.monitoringEnabled)
@@ -90,6 +90,22 @@ class SettingsRepository private constructor(private val store: androidx.datasto
         }
     }
     suspend fun updateAppLanguage(language: AppLanguage) { store.edit { it[LANGUAGE] = language.name } }
+    /** Only the existing mail_retention_days changes; never reschedule monitoring or register with Gateway. */
+    suspend fun updateMailRetentionPolicy(policy: direct.kabu.alertkun.model.ServerDeletePolicy) {
+        store.edit { it[RETENTION] = direct.kabu.alertkun.model.LocalMailRetention.days(policy) }
+    }
+
+    /** Persist an attempt before touching Room; a failed purge is not repeated in the same hour. */
+    internal suspend fun claimLocalMailCleanup(hourStart: Long): Boolean {
+        var claimed = false
+        store.edit { p ->
+            if (p[LAST_LOCAL_CLEANUP_HOUR]?.let { it >= hourStart } != true) {
+                p[LAST_LOCAL_CLEANUP_HOUR] = hourStart
+                claimed = true
+            }
+        }
+        return claimed
+    }
     private fun invalidateFcmScheduleIfChanged(p: androidx.datastore.preferences.core.MutablePreferences, poll: Int, enabled: Boolean) {
         if ((p[POLL] ?: 5) != poll || (p[ENABLED] ?: false) != enabled) {
             direct.kabu.alertkun.data.preferences.FcmSchedulePreferences.invalidate(p)
@@ -100,6 +116,7 @@ class SettingsRepository private constructor(private val store: androidx.datasto
         private val MYDNS_MASTER_ID = androidx.datastore.preferences.core.stringPreferencesKey("mydns_master_id")
         internal val POLL = intPreferencesKey("poll_interval_minutes")
         private val RETENTION = intPreferencesKey("mail_retention_days")
+        private val LAST_LOCAL_CLEANUP_HOUR = androidx.datastore.preferences.core.longPreferencesKey("last_local_mail_cleanup_hour")
         private val FAILURE = intPreferencesKey("consecutive_failure_threshold")
         internal val ENABLED = booleanPreferencesKey("monitoring_enabled")
         private val CHECK_ON_APP_START = booleanPreferencesKey("check_immediately_on_app_start")

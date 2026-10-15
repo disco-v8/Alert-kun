@@ -4,6 +4,8 @@ import android.Manifest
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.content.ContextWrapper
+import android.content.ComponentName
 import android.media.MediaPlayer
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -61,14 +63,16 @@ class AlarmOncePlaybackTest {
         fixture.delete()
     }
 
-    @Test fun onceDoesNotLoopAndCompletionReleasesPlayerWithoutService() {
-        assertEquals(AlarmDelivery.ONCE, controller.start(event(AlarmMode.ONCE)).delivery)
+    @Test fun onceDoesNotLoopAndCompletionReleasesPlayerAndService() {
+        assertEquals(AlarmDelivery.FOREGROUND_SERVICE, controller.start(event(AlarmMode.ONCE)).delivery)
+        await { player() != null }
         val playing = player()!!
         assertFalse(playing.isLooping)
         assertTrue(playing.isPlaying)
-        assertNull(controller.pendingToken())
-        assertFalse(serviceRunning())
-        await { player() == null }
+        assertNotNull(controller.pendingToken())
+        assertTrue(serviceRunning())
+        await { player() == null && !serviceRunning() && controller.pendingToken() == null }
+        assertNull(focusRequest())
         // Accessing a released player must fail, proving release rather than clearing the field.
         assertThrows(IllegalStateException::class.java) { playing.start() }
         assertEquals(AlarmState.IDLE, controller.currentState())
@@ -82,12 +86,14 @@ class AlarmOncePlaybackTest {
         val listeningMs = InstrumentationRegistry.getArguments()
             .getString("continuousListeningSeconds")?.toLongOrNull()?.coerceIn(3, 30)?.times(1_000) ?: 3_000L
         for (type in if (listeningType == null) AlarmSoundType.entries else emptyList()) {
-            assertEquals(AlarmDelivery.ONCE, controller.start(event(AlarmMode.ONCE).copy(soundType = type)).delivery)
+            assertEquals(AlarmDelivery.FOREGROUND_SERVICE, controller.start(event(AlarmMode.ONCE).copy(soundType = type)).delivery)
+            await { player() != null }
             val once = player()!!
             assertFalse(once.isLooping)
-            assertFalse(serviceRunning())
+            assertTrue(serviceRunning())
+            assertEquals(AlarmSoundMapping.usage(type), focusRequest()!!.audioAttributes.usage)
             assertPlaybackUsage(once, type, AlarmMode.ONCE)
-            await { player() == null }
+            await { player() == null && !serviceRunning() }
             assertThrows(IllegalStateException::class.java) { once.start() }
         }
         for (type in continuousTypes) {
@@ -128,11 +134,12 @@ class AlarmOncePlaybackTest {
         for (type in AlarmSoundType.entries) {
             for (uri in listOf(null, "content://direct.kabu.alertkun.invalid/sound")) {
                 controller.start(event(AlarmMode.ONCE).copy(soundType = type, soundUri = uri))
+                await { player() != null }
                 val playing = player()!!
                 assertFalse(playing.isLooping)
                 assertPlaybackUsage(playing, type, AlarmMode.ONCE)
                 controller.stop()
-                assertNull(player())
+                await { player() == null && !serviceRunning() }
                 assertThrows(IllegalStateException::class.java) { playing.start() }
             }
         }
@@ -161,18 +168,19 @@ class AlarmOncePlaybackTest {
 
     @Test fun deviceDefaultSoundIsNotLoopingAndCompletes() {
         controller.start(event(AlarmMode.ONCE).copy(soundUri = null))
+        await { player() != null }
         val playing = player()!!
         Log.i("AlarmOnceTest", "default durationMs=${playing.duration} looping=${playing.isLooping}")
         assertFalse(playing.isLooping)
         val duration = playing.duration
         shell("dumpsys media.player").lineSequence().filter { it.contains("autoLoop(") }
             .forEach { Log.i("AlarmOnceTest", "native flags: ${it.trim()}") }
-        await(duration.toLong() + 5_000) { player() == null }
+        await(duration.toLong() + 5_000) { player() == null && !serviceRunning() }
         assertThrows(IllegalStateException::class.java) { playing.start() }
         assertFalse(serviceRunning())
     }
 
-    @Test fun finiteCountsPlayExactCyclesAndVibrationsThenReleaseWithoutService() {
+    @Test fun finiteCountsPlayExactCyclesAndVibrationsThenReleaseServiceAndFocus() {
         for (mode in listOf(AlarmMode.ONCE, AlarmMode.THREE_TIMES, AlarmMode.FIVE_TIMES)) {
             val before = vibrationHistory().toSet()
             val alarm = event(mode).copy(vibrationPattern = VibrationPattern.PATTERN_3)
@@ -180,6 +188,7 @@ class AlarmOncePlaybackTest {
             assertEquals(mode.finiteCount, players.size)
             assertNull(player())
             assertFalse(serviceRunning())
+            assertNull(focusRequest())
             for (completed in players) assertThrows(IllegalStateException::class.java) { completed.start() }
             if (Build.VERSION.SDK_INT >= 31) {
                 val cycles = vibrationHistory().filter { it !in before }
@@ -202,6 +211,7 @@ class AlarmOncePlaybackTest {
 
     @Test fun newAlarmAndStopDiscardOldFiniteCycles() {
         controller.start(event(AlarmMode.FIVE_TIMES))
+        await { player() != null }
         val replaced = player()!!
         SystemClock.sleep(200)
         val replacement = collectFinitePlayers(event(AlarmMode.ONCE))
@@ -212,29 +222,30 @@ class AlarmOncePlaybackTest {
         assertNull(finiteSequence())
 
         controller.start(event(AlarmMode.THREE_TIMES))
+        await { player() != null }
         val stopped = player()!!
         context.sendBroadcast(Intent(context, AlarmActionReceiver::class.java).setAction(AlarmActionReceiver.ACTION_STOP))
-        await { player() == null && finiteSequence() == null }
+        await { player() == null && finiteSequence() == null && !serviceRunning() }
         SystemClock.sleep(1_600)
         assertNull(player())
         assertThrows(IllegalStateException::class.java) { stopped.start() }
         assertFalse(serviceRunning())
     }
 
-    @Test fun everyFiniteModeIsRejectedByExactAlarmAndServiceActivation() {
+    @Test fun everyFiniteModeIgnoresExactAlarmReceiver() {
         for (mode in AlarmMode.entries.filter { it != AlarmMode.UNTIL_STOPPED }) {
             PendingAlarmStore(context).save(PendingAlarm("finite-token", event(mode)))
             controller.startFromExactAlarm("finite-token")
-            assertFalse(controller.activate(AlarmPlaybackService(), "finite-token"))
             assertNull(player())
             assertFalse(serviceRunning())
         }
     }
 
     private fun collectFinitePlayers(alarm: AlarmEvent, timeout: Long = 20_000): Set<MediaPlayer> {
-        assertEquals(AlarmDelivery.ONCE, controller.start(alarm).delivery)
-        assertNull(controller.pendingToken())
-        assertFalse(serviceRunning())
+        assertTrue(controller.start(alarm).delivery in listOf(AlarmDelivery.FOREGROUND_SERVICE, AlarmDelivery.ACTIVE_SERVICE))
+        await { player() != null }
+        assertNotNull(controller.pendingToken())
+        assertTrue(serviceRunning())
         val players = linkedSetOf<MediaPlayer>()
         val deadline = SystemClock.elapsedRealtime() + timeout
         while (finiteSequence() != null && SystemClock.elapsedRealtime() < deadline) {
@@ -247,6 +258,7 @@ class AlarmOncePlaybackTest {
             SystemClock.sleep(10)
         }
         assertNull("Finite alarm did not finish", finiteSequence())
+        await { !serviceRunning() && controller.pendingToken() == null }
         Log.i("AlarmCountTest", "${alarm.alarmMode}: cycles=${players.size}, released=${player() == null}")
         return players
     }
@@ -258,6 +270,7 @@ class AlarmOncePlaybackTest {
 
     @Test fun ordinarySoundCompletionListenerReleasesPlayer() {
         controller.start(event(AlarmMode.ONCE))
+        await { player() != null }
         val playing = player()!!
         synchronized(controller) {
             // Disable only the duration safeguard to exercise the normal completion listener.
@@ -272,9 +285,11 @@ class AlarmOncePlaybackTest {
 
     @Test fun replacingOnceCancelsThePreviousDurationCallback() {
         controller.start(event(AlarmMode.ONCE))
+        await { player() != null }
         val previous = player()!!
         SystemClock.sleep(600)
         controller.start(event(AlarmMode.ONCE))
+        await { player() != null && player() !== previous }
         val replacement = player()!!
         assertNotSame(previous, replacement)
         assertThrows(IllegalStateException::class.java) { previous.start() }
@@ -284,10 +299,10 @@ class AlarmOncePlaybackTest {
         assertThrows(IllegalStateException::class.java) { replacement.start() }
     }
 
-    @Test fun onceHandoffCannotEnterExactAlarmOrServiceActivation() {
+    @Test fun finiteHandoffPreservesCountAndSoundTypeAcrossStoreRecreation() {
         PendingAlarmStore(context).save(PendingAlarm("once-token", event(AlarmMode.ONCE)))
         controller.startFromExactAlarm("once-token")
-        assertFalse(controller.activate(AlarmPlaybackService(), "once-token"))
+        assertEquals(AlarmMode.ONCE, PendingAlarmStore(context).load()!!.event.alarmMode)
         assertEquals(AlarmState.IDLE, controller.currentState())
         assertNull(player())
         assertFalse(serviceRunning())
@@ -339,6 +354,69 @@ class AlarmOncePlaybackTest {
 
     private fun player(): MediaPlayer? = synchronized(controller) {
         AlarmController::class.java.getDeclaredField("player").apply { isAccessible = true }.get(controller) as MediaPlayer?
+    }
+
+    private fun focusRequest(): AudioFocusRequest? = synchronized(controller) {
+        AlarmController::class.java.getDeclaredField("focusRequest").apply { isAccessible = true }
+            .get(controller) as AudioFocusRequest?
+    }
+
+    @Test fun rejectedDirectServiceStartKeepsNotificationAndVibrationWithoutPlayer() {
+        val rejecting = object : ContextWrapper(context) {
+            override fun getApplicationContext(): Context = this
+            override fun startForegroundService(service: Intent): ComponentName? = throw IllegalStateException("test rejection")
+            override fun startService(service: Intent): ComponentName? = throw IllegalStateException("test rejection")
+        }
+        val isolated = AlarmController::class.java.getDeclaredConstructor(Context::class.java)
+            .apply { isAccessible = true }.newInstance(rejecting)
+        try {
+            val result = isolated.start(event(AlarmMode.THREE_TIMES))
+            assertEquals(AlarmDelivery.FALLBACK_NOTIFICATION, result.delivery)
+            assertNull(AlarmController::class.java.getDeclaredField("player").apply { isAccessible = true }.get(isolated))
+            assertFalse(serviceRunning())
+            val notice = context.getSystemService(NotificationManager::class.java).activeNotifications
+                .single { it.id == AlarmController.NOTIFICATION_ID }.notification
+            assertNotNull(notice.actions.last().actionIntent)
+        } finally { isolated.stop() }
+    }
+
+    @Test fun finiteTerminalCleanupReleasesOutputsFocusAndForegroundService() {
+        controller.start(event(AlarmMode.FIVE_TIMES))
+        await { player() != null }
+        val playing = player()!!
+        assertNotNull(focusRequest())
+        // The same terminal path is used by player error and failed cycle start.
+        synchronized(controller) {
+            AlarmController::class.java.getDeclaredMethod("finishFinitePlayback")
+                .apply { isAccessible = true }.invoke(controller)
+        }
+        await { !serviceRunning() }
+        assertNull(player())
+        assertNull(finiteSequence())
+        assertNull(focusRequest())
+        assertNull(controller.pendingToken())
+        assertThrows(IllegalStateException::class.java) { playing.start() }
+        assertTrue(context.getSystemService(NotificationManager::class.java).activeNotifications
+            .none { it.id == AlarmController.PLAYBACK_NOTIFICATION_ID })
+    }
+
+    @Test fun finiteAndContinuousReplaceEachOtherWithoutOldTimersStoppingNewAlarm() {
+        controller.start(event(AlarmMode.FIVE_TIMES))
+        await { player() != null }
+        val finite = player()!!
+        controller.start(event(AlarmMode.UNTIL_STOPPED))
+        await { controller.session.value != null && player()?.isLooping == true }
+        val continuous = player()!!
+        assertThrows(IllegalStateException::class.java) { finite.start() }
+        SystemClock.sleep(1_200)
+        assertSame(continuous, player())
+        controller.start(event(AlarmMode.ONCE))
+        await { player() != null && player() !== continuous && controller.session.value == null }
+        val once = player()!!
+        assertFalse(once.isLooping)
+        assertThrows(IllegalStateException::class.java) { continuous.start() }
+        await { !serviceRunning() && player() == null && controller.pendingToken() == null }
+        assertNull(focusRequest())
     }
 
     @Suppress("DEPRECATION")

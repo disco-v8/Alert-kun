@@ -61,18 +61,18 @@ class AlarmPlaybackInstrumentationTest {
         await { manager.activeNotifications.none { it.id == AlarmController.PLAYBACK_NOTIFICATION_ID } }
     }
 
-    @Test fun oncePostsDetailsWithoutPersistentAlarmAndKeepsNoHandoff() {
+    @Test fun oncePostsDetailsAndUsesFiniteServiceWithoutContinuousSession() {
         val result = controller.start(event("once", AlarmMode.ONCE))
-        assertEquals(AlarmDelivery.ONCE, result.delivery)
+        assertEquals(AlarmDelivery.FOREGROUND_SERVICE, result.delivery)
         assertEquals(AlarmState.IDLE, controller.currentState())
-        assertNull(controller.pendingToken())
+        assertNotNull(controller.pendingToken())
         await { manager.activeNotifications.any { it.id == AlarmController.NOTIFICATION_ID } }
         val notification = manager.activeNotifications.single { it.id == AlarmController.NOTIFICATION_ID }.notification
         val text = notification.extras.getCharSequence("android.bigText").toString()
         assertTrue(text.contains("sender@example.invalid"))
         assertTrue(text.contains("Test rule"))
         assertNotNull(notification.contentIntent)
-        assertTrue(manager.activeNotifications.none { it.id == AlarmController.PLAYBACK_NOTIFICATION_ID })
+        assertNull(controller.session.value)
     }
 
     @Test fun handoffSurvivesStoreRecreationAndStaleTokenCannotStart() {

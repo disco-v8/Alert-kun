@@ -34,6 +34,7 @@ internal object ObservationFormat {
         "blockedCallbackSupported", "networkBlocked",
         "callbackType", "networkHandle", "transport", "isDefaultNetwork", "trackedDefault",
         "capabilitySource",
+        "alarmToken", "alarmMode", "soundType", "requestedCount", "completedCount", "usage", "focusGranted",
     )
 
     fun line(event: String, values: Map<String, Any?>, now: Long, zone: TimeZone): String {

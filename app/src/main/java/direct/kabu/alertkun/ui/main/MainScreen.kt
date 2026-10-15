@@ -93,14 +93,15 @@ fun MainScreen(
             NavigationButton(label = stringResource(R.string.received_mail), onClick = onOpenMail)
             NavigationButton(label = stringResource(R.string.rule_settings), onClick = onOpenRules)
             NavigationButton(label = stringResource(R.string.account_settings), onClick = onOpenAccount)
-            NavigationButton(label = stringResource(R.string.settings), onClick = onOpenSettings)
+            NavigationButton(label = stringResource(R.string.settings), onClick = onOpenSettings,
+                modifier = Modifier.testTag("main_open_settings"))
         }
     }
 }
 
 @Composable
-private fun NavigationButton(label: String, onClick: () -> Unit) {
-    Button(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
+private fun NavigationButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Button(modifier = modifier.fillMaxWidth(), onClick = onClick) {
         Text(text = label, style = MaterialTheme.typography.titleMedium)
     }
 }

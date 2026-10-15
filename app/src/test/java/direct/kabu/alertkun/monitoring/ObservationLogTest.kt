@@ -11,6 +11,17 @@ import org.junit.rules.TemporaryFolder
 class ObservationLogTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun alarmLifecycleMetadataExcludesMailAndSoundUri() {
+        val line = ObservationFormat.line("ALARM_CYCLE_COMPLETED", mapOf(
+            "alarmToken" to "synthetic-session", "alarmMode" to "THREE_TIMES", "soundType" to "ALARM",
+            "requestedCount" to 3, "completedCount" to 2, "usage" to 4, "focusGranted" to true,
+            "soundUri" to "private-sound", "subject" to "private-mail", "ruleName" to "private-rule"),
+            0L, TimeZone.getTimeZone("UTC"))
+        for (field in listOf("alarmMode=THREE_TIMES", "soundType=ALARM", "requestedCount=3",
+                "completedCount=2", "focusGranted=true")) assertTrue(line.contains(field))
+        assertFalse(line.contains("private-"))
+    }
+
     @Test fun timestampIncludesMillisecondsAndCurrentOffset() {
         assertEquals("1970-01-01T09:00:00.123+09:00 FCM_RECEIVED ttl=300\n",
             ObservationFormat.line("FCM_RECEIVED", mapOf("ttl" to 300), 123, TimeZone.getTimeZone("Asia/Tokyo")))

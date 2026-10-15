@@ -28,7 +28,7 @@ class MailBackgroundColorMigrationTest {
                 db.version = 1
             }
             val database = Room.databaseBuilder(context, AlertKunDatabase::class.java, name)
-                .addMigrations(AlertKunDatabase.MIGRATION_1_2, AlertKunDatabase.MIGRATION_2_3, AlertKunDatabase.MIGRATION_3_4, AlertKunDatabase.MIGRATION_4_5, AlertKunDatabase.MIGRATION_5_6).build()
+                .addMigrations(AlertKunDatabase.MIGRATION_1_2, AlertKunDatabase.MIGRATION_2_3, AlertKunDatabase.MIGRATION_3_4, AlertKunDatabase.MIGRATION_4_5, AlertKunDatabase.MIGRATION_5_6, AlertKunDatabase.MIGRATION_6_7).build()
             migrated = database
             assertEquals(MailBackgroundColor.DEFAULT, database.ruleDao().getById("r")!!.backgroundColor)
             assertEquals(direct.kabu.alertkun.model.AlarmSoundType.ALARM, database.ruleDao().getById("r")!!.soundType)

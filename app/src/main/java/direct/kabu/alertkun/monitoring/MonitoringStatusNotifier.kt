@@ -143,10 +143,12 @@ internal class MonitoringStatusNotifier(
             }
             if (!silent) append('\n').append(context.getString(R.string.monitoring_status_silent_recommendation))
         }
-        val open = PendingIntent.getActivity(context, NOTIFICATION_ID, Intent(context, MainActivity::class.java),
+        val open = PendingIntent.getActivity(context, NOTIFICATION_ID, Intent(context, MainActivity::class.java)
+            .setAction(MainActivity.ACTION_OPEN_MAIN)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(if (selectedAlarm == null) R.drawable.ic_notification_normal else R.drawable.ic_notification_rule_match)
             .setContentTitle(title)
             .setContentText(if (selectedAlarm == null) message else subject)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))

@@ -15,7 +15,7 @@ class DeleteResolutionMigrationTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "delete-resolution-" + UUID.randomUUID() + ".db"
         fun open() = Room.databaseBuilder(context, AlertKunDatabase::class.java, name)
-            .addMigrations(AlertKunDatabase.MIGRATION_5_6).build()
+            .addMigrations(AlertKunDatabase.MIGRATION_5_6, AlertKunDatabase.MIGRATION_6_7).build()
         try {
             context.openOrCreateDatabase(name, Context.MODE_PRIVATE, null).use { db ->
                 db.execSQL("""CREATE TABLE IF NOT EXISTS `accounts` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `protocol` TEXT NOT NULL, `host` TEXT NOT NULL, `port` INTEGER NOT NULL, `username` TEXT NOT NULL, `credentialKey` TEXT NOT NULL, `deleteAfterReceive` INTEGER NOT NULL, `trustedCertificateId` TEXT, `enabled` INTEGER NOT NULL, `serverDeletePolicy` TEXT NOT NULL DEFAULT 'NEVER', `tlsValidationMode` TEXT NOT NULL DEFAULT 'STRICT', `certificateFingerprint` TEXT, PRIMARY KEY(`id`))""")

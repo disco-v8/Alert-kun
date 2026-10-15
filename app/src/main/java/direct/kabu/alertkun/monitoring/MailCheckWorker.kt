@@ -132,6 +132,10 @@ class MailCheckWorker(appContext: Context, parameters: WorkerParameters) : Corou
                     if (failure.shouldNotify) MonitoringFailureNotifier(applicationContext).post(settings.consecutiveFailureThreshold, completedAt,
                         direct.kabu.alertkun.mail.common.MailConnectionSettings.classify(error))
                 } finally {
+                    LocalMailCleanup(SettingsRepository(applicationContext), { policy, cleanupAt ->
+                        direct.kabu.alertkun.data.database.AlertKunDatabase.getInstance(applicationContext)
+                            .receivedMailDao().purgeLocalMail(policy, cleanupAt)
+                    }, connectionObservation).run(startedAt, System.currentTimeMillis())
                     if (startupRebase) {
                         MonitoringScheduler.enqueueRebasedScheduleIfCurrent(applicationContext,
                             StartupReconcilePolicy.targetAfterCheck(startedAt, settings.pollIntervalMinutes), generation, settings.pollIntervalMinutes)

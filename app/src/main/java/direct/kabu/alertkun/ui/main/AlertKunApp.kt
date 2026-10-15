@@ -25,7 +25,7 @@ private object AlertKunRoute {
 }
 
 @Composable
-fun AlertKunApp(openMailRequest: Int = 0) {
+fun AlertKunApp(openMailRequest: Int = 0, openMainRequest: Int = 0) {
     val navController = rememberNavController()
     val monitoringViewModel: MainMonitoringViewModel = viewModel()
     val monitoring by monitoringViewModel.state.collectAsStateWithLifecycle()
@@ -82,7 +82,9 @@ fun AlertKunApp(openMailRequest: Int = 0) {
             OtherSettingsScreen(onBack = navController::navigateUp)
         }
     }
-    LaunchedEffect(openMailRequest) {
-        if (openMailRequest > 0) navController.navigate(AlertKunRoute.ReceivedMail) { launchSingleTop = true }
+    LaunchedEffect(openMailRequest, openMainRequest) {
+        // The latest notification wins even if two intents arrive before the next composition.
+        if (openMainRequest > openMailRequest) navController.popBackStack(AlertKunRoute.Main, inclusive = false)
+        else if (openMailRequest > 0) navController.navigate(AlertKunRoute.ReceivedMail) { launchSingleTop = true }
     }
 }

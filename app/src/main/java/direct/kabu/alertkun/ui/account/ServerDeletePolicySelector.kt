@@ -18,22 +18,24 @@ import direct.kabu.alertkun.R
 import direct.kabu.alertkun.model.ServerDeletePolicy
 
 @Composable
-internal fun ServerDeletePolicySelector(selected: ServerDeletePolicy, enabled: Boolean, onSelected: (ServerDeletePolicy) -> Unit) {
+internal fun ServerDeletePolicySelector(selected: ServerDeletePolicy, enabled: Boolean,
+    label: Int = R.string.server_delete_policy, tag: String = "server_delete_policy",
+    showServerHint: Boolean = true, onSelected: (ServerDeletePolicy) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     Column {
-        Text(stringResource(R.string.server_delete_policy))
+        Text(stringResource(label))
         OutlinedButton(onClick = { expanded = true }, enabled = enabled,
-            modifier = Modifier.fillMaxWidth().testTag("server_delete_policy")) {
+            modifier = Modifier.fillMaxWidth().testTag(tag)) {
             Text(stringResource(policyLabel(selected)))
         }
         DropdownMenu(expanded = expanded && enabled, onDismissRequest = { expanded = false }) {
             ServerDeletePolicy.entries.forEach { policy ->
                 DropdownMenuItem(text = { Text(stringResource(policyLabel(policy))) },
-                    modifier = Modifier.testTag("server_delete_policy_${policy.name}"),
+                    modifier = Modifier.testTag("${tag}_${policy.name}"),
                     onClick = { onSelected(policy); expanded = false })
             }
         }
-        if (selected == ServerDeletePolicy.IMMEDIATELY) Text(stringResource(R.string.server_delete_immediately_hint))
+        if (showServerHint && selected == ServerDeletePolicy.IMMEDIATELY) Text(stringResource(R.string.server_delete_immediately_hint))
     }
 }
 

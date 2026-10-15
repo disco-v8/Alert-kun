@@ -36,7 +36,8 @@ class MonitoringStatusNotificationTest {
             assertTrue(normal.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
             assertEquals(0, normal.flags and Notification.FLAG_FOREGROUND_SERVICE)
             assertNull(normal.fullScreenIntent)
-            assertEquals("AlertKun", normal.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+            assertEquals(if (localized === ja) "アラートくん" else "Alert-kun",
+                normal.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
             assertEquals(MonitoringStatusNotifier.CHANNEL_ID, normal.channelId)
         }
         assertNotEquals(MonitoringHealthNotifier.CHANNEL_ID, MonitoringStatusNotifier.CHANNEL_ID)

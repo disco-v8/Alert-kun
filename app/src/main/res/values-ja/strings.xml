@@ -90,7 +90,7 @@
     <string name="account_saved_action">保存済み</string>
     <string name="alarm_unknown_sender">（差出人不明）</string>
     <string name="alarm_notification_details">%1$s\n差出人：%2$s\nルール：%3$s\n受信日時：%4$s</string>
-    <string name="alarm_start_unavailable">継続警報を自動開始できませんでした。アラームと通知の許可を確認するか、「警報を開始」を押してください。</string>
+    <string name="alarm_start_unavailable">警報音を自動開始できませんでした。アラームと通知の許可を確認するか、「警報を開始」を押してください。</string>
     <string name="alarm_start_action">警報を開始</string>
     <string name="alarm_exact_permission_required">継続警報を使用するには「アラームとリマインダー」の許可が必要です。未許可の場合は単発警報のみ実行します。</string>
     <string name="alarm_allow_exact">アラームとリマインダーを許可</string>
@@ -102,7 +102,8 @@
     <string name="alarm_sound_selected">選択した端末の音</string>
     <string name="alarm_three_times">3回</string>
     <string name="alarm_five_times">5回</string>
-    <string name="server_delete_policy">サーバーから削除</string>
+    <string name="server_delete_policy">サーバーからメール削除</string>
+    <string name="local_mail_delete_policy">内部からメール削除</string>
     <string name="server_delete_immediately">即削除</string>
     <string name="server_delete_after_1_day">1日以上経過</string>
     <string name="server_delete_after_1_week">1週間以上経過</string>
@@ -135,7 +136,7 @@
     <string name="mydns_gateway_auth_failed">MyDNS.JPのMasterIDまたはMasterPwdを確認してください。</string>
     <string name="mydns_gateway_unavailable">Gatewayに登録できませんでした。しばらくしてから再度お試しください。</string>
     <string name="monitoring_status_channel_name">監視状態</string>
-    <string name="monitoring_status_title">AlertKun</string>
+    <string name="monitoring_status_title">アラートくん</string>
     <string name="monitoring_status_date_pattern">yyyy年MM月dd日 HH:mm</string>
     <string name="monitoring_status_no_issues">異常なし</string>
     <string name="monitoring_status_silent_recommendation">※異常なし通知はサイレント通知にされることをおすすめします</string>

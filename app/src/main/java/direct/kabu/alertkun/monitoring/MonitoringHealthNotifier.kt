@@ -44,9 +44,11 @@ internal class MonitoringHealthNotifier(private val context: Context) {
         val timestamp = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault()).format(Date(completedAt))
         val message = context.getString(R.string.monitoring_health_message, alertCount, timestamp)
         val open = PendingIntent.getActivity(context, NOTIFICATION_ID,
-            Intent(context, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            Intent(context, MainActivity::class.java).setAction(MainActivity.ACTION_OPEN_MAIN)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notification_normal)
             .setContentTitle(context.getString(R.string.monitoring_health_title))
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))

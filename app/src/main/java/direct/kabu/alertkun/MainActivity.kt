@@ -22,6 +22,7 @@ import direct.kabu.alertkun.push.FcmRegistrationCoordinator
 
 class MainActivity : AppCompatActivity() {
     private var openMailRequest by mutableIntStateOf(0)
+    private var openMainRequest by mutableIntStateOf(0)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         FcmRegistrationCoordinator.start(applicationContext)
@@ -29,13 +30,13 @@ class MainActivity : AppCompatActivity() {
             AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en"))
         }
         enableEdgeToEdge()
-        if (intent.action == AlarmController.ACTION_OPEN_MAIL) openMailRequest++
+        handleNavigationIntent(intent)
         lifecycleScope.launch {
             MonitoringScheduler.reconcileOnAppStart(this@MainActivity, SettingsRepository(this@MainActivity).settings.first())
         }
         setContent {
             AlertKunTheme {
-                AlertKunApp(openMailRequest)
+                AlertKunApp(openMailRequest, openMainRequest)
             }
         }
     }
@@ -43,11 +44,23 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (intent.action == AlarmController.ACTION_OPEN_MAIL) openMailRequest++
+        handleNavigationIntent(intent)
+    }
+
+    private fun handleNavigationIntent(intent: Intent) {
+        val nextRequest = maxOf(openMailRequest, openMainRequest) + 1
+        when (intent.action) {
+            AlarmController.ACTION_OPEN_MAIL -> openMailRequest = nextRequest
+            ACTION_OPEN_MAIN -> openMainRequest = nextRequest
+        }
     }
 
     override fun onResume() {
         super.onResume()
         AlarmController.getInstance(this).refreshPendingPermissionWarning()
+    }
+
+    companion object {
+        const val ACTION_OPEN_MAIN = "direct.kabu.alertkun.action.OPEN_MAIN"
     }
 }

@@ -21,7 +21,7 @@ internal class MonitoringFailureNotifier(private val context: Context) {
         }
         try {
             manager.notify(NOTIFICATION_ID, NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_dialog_alert).setContentTitle(context.getString(R.string.monitoring_failure_title))
+                .setSmallIcon(R.drawable.ic_notification_rule_match).setContentTitle(context.getString(R.string.monitoring_failure_title))
                 .setContentText(message)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(message))
                 .setWhen(failedAtEpochMillis).setAutoCancel(true).build())

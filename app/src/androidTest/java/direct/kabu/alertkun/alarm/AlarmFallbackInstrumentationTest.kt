@@ -34,7 +34,7 @@ class AlarmFallbackInstrumentationTest {
         controller.stop()
         val result = controller.start(AlarmEvent("fallback", "rule", "Rule", "Subject", null,
             VibrationPattern.NONE, AlarmMode.UNTIL_STOPPED))
-        assertEquals(AlarmDelivery.FALLBACK_ONCE, result.delivery)
+        assertEquals(AlarmDelivery.FALLBACK_NOTIFICATION, result.delivery)
         assertEquals(AlarmState.IDLE, controller.currentState())
         val manager = context.getSystemService(NotificationManager::class.java)
         await { manager.activeNotifications.any { it.id == AlarmController.NOTIFICATION_ID } }

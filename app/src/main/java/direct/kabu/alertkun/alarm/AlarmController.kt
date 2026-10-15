@@ -32,6 +32,7 @@ import direct.kabu.alertkun.MainActivity
 import direct.kabu.alertkun.R
 import direct.kabu.alertkun.model.AlarmMode
 import direct.kabu.alertkun.model.AlarmSoundType
+import direct.kabu.alertkun.monitoring.MonitoringObservation
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -41,7 +42,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 data class AlarmStartResult(val notificationPosted: Boolean, val state: AlarmState,
-    val delivery: AlarmDelivery = AlarmDelivery.ONCE)
+    val delivery: AlarmDelivery = AlarmDelivery.FOREGROUND_SERVICE)
 
 /** Latest alarm replaces the previous alarm. No protocol or rule evaluation here. */
 class AlarmController private constructor(context: Context) {
@@ -59,6 +60,7 @@ class AlarmController private constructor(context: Context) {
     private var playbackService: WeakReference<AlarmPlaybackService>? = null
     private var focusRequest: AudioFocusRequest? = null
     private var hasLegacyFocus = false
+    private var finiteSoundAllowed = false
     private val vibrationToken = Any()
     private val mutableSession = MutableStateFlow<AlarmSession?>(null)
     val session = mutableSession.asStateFlow()
@@ -84,32 +86,40 @@ class AlarmController private constructor(context: Context) {
                 if (activeToken != null) AlarmDelivery.ACTIVE_SERVICE else AlarmDelivery.EXACT_ALARM)
         }
         // Persist handoff before accepting it; errors leave the mail RECEIVED for recovery.
-        val runningService = playbackService?.get()?.takeIf { lifecycle.state == AlarmState.ACTIVE }
+        val runningService = playbackService?.get()?.takeIf { activeToken != null }
+        val runningContinuous = activeToken?.let(::isContinuous) == true
         val token = UUID.randomUUID().toString()
-        if (event.alarmMode == AlarmMode.UNTIL_STOPPED) pending.save(PendingAlarm(token, event))
-        else pending.clear()
+        pending.save(PendingAlarm(token, event))
+        observe("ALARM_PLAYBACK_REQUESTED", token, event)
         cancelExactAlarm()
         activeToken = null
         lifecycle.stop()
         mutableSession.value = null
         stopOutputsLocked()
         var delivery = AlarmDeliveryPolicy.delivery(event.alarmMode, canScheduleExactAlarms(), canPostNotifications())
-        if (delivery == AlarmDelivery.EXACT_ALARM && runningService != null) {
-            // Already foreground: replace in-place, avoiding repeated exact-alarm throttling.
-            handler.post { runningService.replaceAlarm(token) }
-            delivery = AlarmDelivery.ACTIVE_SERVICE
+        if (delivery != AlarmDelivery.FALLBACK_NOTIFICATION && runningService != null) {
+            if (runningContinuous == (event.alarmMode == AlarmMode.UNTIL_STOPPED)) {
+                // Already foreground: replace in-place, avoiding repeated exact-alarm throttling.
+                handler.post { runningService.replaceAlarm(token) }
+                delivery = AlarmDelivery.ACTIVE_SERVICE
+            } else {
+                // Re-enter onStartCommand to update START_STICKY / START_NOT_STICKY at the OS.
+                delivery = AlarmDelivery.FOREGROUND_SERVICE
+            }
         }
         if (delivery == AlarmDelivery.EXACT_ALARM) {
             try {
                 alarms.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP,
                     SystemClock.elapsedRealtime() + 100L, exactPendingIntent(token))
-            } catch (_: SecurityException) { delivery = AlarmDelivery.FALLBACK_ONCE }
+            } catch (_: SecurityException) { delivery = AlarmDelivery.FALLBACK_NOTIFICATION }
         }
-        val posted = postNotification(event, token, delivery == AlarmDelivery.FALLBACK_ONCE,
+        val posted = postNotification(event, token, delivery == AlarmDelivery.FALLBACK_NOTIFICATION,
             event.alarmMode == AlarmMode.UNTIL_STOPPED)
-        if (delivery == AlarmDelivery.ONCE || delivery == AlarmDelivery.FALLBACK_ONCE) {
+        if (delivery == AlarmDelivery.FOREGROUND_SERVICE && !startPlaybackService(PendingAlarm(token, event))) {
+            delivery = AlarmDelivery.FALLBACK_NOTIFICATION
+        } else if (delivery == AlarmDelivery.FALLBACK_NOTIFICATION) {
             context.stopService(Intent(context, AlarmPlaybackService::class.java))
-            playFinite(event, event.alarmMode.finiteCount ?: 1)
+            fallback(PendingAlarm(token, event))
         }
         return AlarmStartResult(posted, lifecycle.state, delivery)
     }
@@ -120,35 +130,60 @@ class AlarmController private constructor(context: Context) {
         val alarm = pending.load()?.takeIf { it.token == token } ?: return
         if (alarm.event.alarmMode != AlarmMode.UNTIL_STOPPED) return
         debugLog("UNTIL_STOPPED service start")
-        if (!canPostNotifications()) { playFinite(alarm.event, 1); return }
-        try { ContextCompat.startForegroundService(context, playbackIntent(token)) }
-        catch (_: IllegalStateException) { fallback(alarm) }
-        catch (_: SecurityException) { fallback(alarm) }
+        if (!canPostNotifications()) { fallback(alarm); return }
+        startPlaybackService(alarm)
+    }
+
+    private fun startPlaybackService(alarm: PendingAlarm): Boolean = try {
+        ContextCompat.startForegroundService(context, playbackIntent(alarm.token))
+        observe("ALARM_FGS_START_REQUESTED", alarm.token, alarm.event)
+        true
+    } catch (error: RuntimeException) {
+        observe("ALARM_FGS_START_FAILURE", alarm.token, alarm.event, "exceptionClass" to error.javaClass.simpleName)
+        fallback(alarm)
+        false
     }
 
     @Synchronized internal fun pendingToken(): String? = pending.load()?.token
+    @Synchronized internal fun isContinuous(token: String): Boolean =
+        pending.load()?.takeIf { it.token == token }?.event?.alarmMode == AlarmMode.UNTIL_STOPPED
+
+    @Synchronized internal fun discardFiniteRestart() {
+        if (pending.load()?.event?.alarmMode != AlarmMode.UNTIL_STOPPED) pending.clear()
+    }
 
     /** Foreground status precedes audio focus acquisition on Android 15+. */
     @Synchronized
     internal fun activate(service: AlarmPlaybackService, token: String): Boolean {
         val alarm = pending.load()?.takeIf { it.token == token } ?: return false
-        if (alarm.event.alarmMode != AlarmMode.UNTIL_STOPPED) return false
         if (activeToken == token) return true
-        if (!canPostNotifications()) return false
+        if (!canPostNotifications()) { fallback(alarm); return false }
         try {
             ServiceCompat.startForeground(service, PLAYBACK_NOTIFICATION_ID,
                 notification(alarm.event, token, false, true),
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else 0)
-        } catch (_: RuntimeException) { fallback(alarm); return false }
+        } catch (error: RuntimeException) {
+            observe("ALARM_FGS_START_FAILURE", token, alarm.event, "exceptionClass" to error.javaClass.simpleName)
+            fallback(alarm)
+            return false
+        }
         stopOutputsLocked()
-        NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+        val continuous = alarm.event.alarmMode == AlarmMode.UNTIL_STOPPED
+        if (continuous) NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
         activeToken = token
         playbackService = WeakReference(service)
-        lifecycle.start(AlarmMode.UNTIL_STOPPED)
-        mutableSession.value = AlarmSession(alarm.event.mailId, alarm.event.ruleId, System.currentTimeMillis())
+        lifecycle.start(alarm.event.alarmMode)
+        mutableSession.value = if (continuous) AlarmSession(alarm.event.mailId, alarm.event.ruleId, System.currentTimeMillis()) else null
+        observe("ALARM_FGS_STARTED", token, alarm.event)
         debugLog("alarm session start mailId=${alarm.event.mailId}")
         val attributes = AlarmSoundMapping.audioAttributes(alarm.event.soundType)
-        if (requestFocus(alarm.event.soundType, attributes) && !startSound(alarm.event, true, attributes)) {
+        val focused = try { requestFocus(alarm.event.soundType, attributes) } catch (_: RuntimeException) { false }
+        observe("ALARM_AUDIO_FOCUS", token, alarm.event, "focusGranted" to focused, "usage" to attributes.usage)
+        if (!continuous) {
+            playFinite(alarm.event, alarm.event.alarmMode.finiteCount!!, focused)
+            return true
+        }
+        if (focused && !startSound(alarm.event, true, attributes)) {
             stop("playback start failure")
             return false
         }
@@ -160,6 +195,8 @@ class AlarmController private constructor(context: Context) {
     internal fun serviceDestroyed(token: String) {
         debugLog("service stop")
         if (activeToken != token) return
+        observe("ALARM_FGS_STOPPED", token, pending.load()?.event)
+        if (!isContinuous(token)) runCatching { pending.clear() }
         playbackService = null
         activeToken = null
         lifecycle.stop()
@@ -172,6 +209,7 @@ class AlarmController private constructor(context: Context) {
     @Synchronized
     fun stop(source: String = "controller"): Boolean {
         debugLog("stop requested from $source")
+        observe("ALARM_STOP_REQUESTED", activeToken, pending.load()?.event)
         val wasActive = lifecycle.stop()
         activeToken = null
         mutableSession.value = null
@@ -220,15 +258,19 @@ class AlarmController private constructor(context: Context) {
     /** Explain revoked permission on reopen, without re-sounding a previously processed mail. */
     @Synchronized
     fun refreshPendingPermissionWarning() {
-        pending.load()?.let { if (!canScheduleExactAlarms()) postNotification(it.event, it.token, true, true) }
+        pending.load()?.let { if (it.event.alarmMode == AlarmMode.UNTIL_STOPPED && !canScheduleExactAlarms())
+            postNotification(it.event, it.token, true, true) }
     }
 
     private fun fallback(alarm: PendingAlarm) {
-        postNotification(alarm.event, alarm.token, true, true)
-        playFinite(alarm.event, 1)
-    }
-    private fun playFinite(event: AlarmEvent, count: Int) {
+        // No unowned background MediaPlayer on any API. Notification action can retry the FGS.
         stopOutputsLocked()
+        postNotification(alarm.event, alarm.token, true, alarm.event.alarmMode == AlarmMode.UNTIL_STOPPED)
+        observe("ALARM_FALLBACK", alarm.token, alarm.event, "reason" to "NOTIFICATION_AND_VIBRATION_ONLY")
+        playFinite(alarm.event, alarm.event.alarmMode.finiteCount ?: 1, false)
+    }
+    private fun playFinite(event: AlarmEvent, count: Int, soundAllowed: Boolean) {
+        finiteSoundAllowed = soundAllowed
         val sequence = FiniteAlarmSequence(count)
         finiteSequence = sequence
         startFiniteCycle(event, sequence)
@@ -245,11 +287,14 @@ class AlarmController private constructor(context: Context) {
                 val next = Runnable { synchronized(this) {
                     if (finiteSequence === sequence) {
                         nextFiniteCycle = null
+                        observe("ALARM_CYCLE_COMPLETED", activeToken ?: pendingToken(), event,
+                            "completedCount" to ((event.alarmMode.finiteCount ?: 1) - sequence.remainingCount + 1))
                         if (sequence.completeCycle()) startFiniteCycle(event, sequence)
                         else {
                             finiteSequence = null
                             vibrator()?.let { AndroidVibrationOutput.cancelPreview(it, vibrationToken) }
                             debugLog("finite alarm completed")
+                            finishFinitePlayback()
                         }
                     }
                 } }
@@ -261,9 +306,26 @@ class AlarmController private constructor(context: Context) {
             startedAt = SystemClock.elapsedRealtime()
             startVibration(event, false)
         }
-        if (!startSound(event, false, onFinished = soundFinished, onStarted = outputsStarted)) {
+        if (!finiteSoundAllowed) {
             outputsStarted()
             soundFinished()
+        } else if (!startSound(event, false, onFinished = soundFinished, onStarted = outputsStarted,
+                onFailed = { finishFinitePlayback() })) {
+            observe("ALARM_PLAYBACK_ERROR", activeToken, event, "reason" to "PLAYER_START_FAILED")
+            finishFinitePlayback()
+        }
+    }
+
+    private fun finishFinitePlayback() {
+        val token = activeToken
+        val service = playbackService?.get()
+        stopOutputsLocked()
+        if (token == null) return // FGS start failed: retain the notification action/handoff.
+        observe("ALARM_PLAYBACK_FINISHED", token, pending.load()?.event)
+        try { service?.finishPlayback(token) } finally {
+            runCatching { pending.clear() }
+            playbackService = null
+            activeToken = null
         }
     }
     private fun postNotification(event: AlarmEvent, token: String, fallback: Boolean, ongoing: Boolean): Boolean {
@@ -282,7 +344,7 @@ class AlarmController private constructor(context: Context) {
         val details = context.getString(R.string.alarm_notification_details, subject, from, event.ruleName, date) +
             if (fallback) "\n" + context.getString(R.string.alarm_start_unavailable) else ""
         return NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setSmallIcon(R.drawable.ic_notification_rule_match)
             .setContentTitle(context.getString(R.string.alarm_notification_title, event.ruleName))
             .setContentText(subject).setStyle(NotificationCompat.BigTextStyle().bigText(details))
             // This is a newly generated alert, even when recovering an older RECEIVED mail.
@@ -324,13 +386,14 @@ class AlarmController private constructor(context: Context) {
         attributes: AudioAttributes = AlarmSoundMapping.audioAttributes(event.soundType),
         onFinished: (() -> Unit)? = null,
         onStarted: (() -> Unit)? = null,
+        onFailed: (() -> Unit)? = null,
     ): Boolean {
         val requested = AlarmSoundMapping.resolveUri(event.soundType, event.soundUri)
         val current = createPlayer(requested, attributes) ?: createPlayer(AlarmSoundMapping.defaultUri(event.soundType), attributes) ?: return false
         player = current
         try {
             // MediaPlayer owns and releases this CPU wake lock with playback; no screen wake lock.
-            if (looping) current.setWakeMode(context, PowerManager.PARTIAL_WAKE_LOCK)
+            if (looping || activeToken != null) current.setWakeMode(context, PowerManager.PARTIAL_WAKE_LOCK)
             current.isLooping = looping
             current.setOnCompletionListener { completed -> synchronized(this) {
                 if (player === completed) {
@@ -341,12 +404,14 @@ class AlarmController private constructor(context: Context) {
             } }
             current.setOnErrorListener { failed, what, extra -> synchronized(this) {
                 debugLog("sound error what=$what extra=$extra")
+                observe("ALARM_PLAYBACK_ERROR", activeToken, event, "category" to what, "reason" to extra)
                 if (player === failed) {
                     if (looping) stop("playback error")
-                    else { releasePlayerLocked(); onFinished?.invoke() }
+                    else { releasePlayerLocked(); (onFailed ?: onFinished)?.invoke() }
                 }
             }; true }
             current.start()
+            observe("ALARM_PLAYBACK_STARTED", activeToken, event, "usage" to attributes.usage)
             onStarted?.invoke()
             debugLog("sound start type=${event.soundType} usage=${attributes.usage} loop=${current.isLooping} durationMs=${current.duration}")
             if (!looping) {
@@ -364,7 +429,11 @@ class AlarmController private constructor(context: Context) {
                 handler.postDelayed(completion, current.duration.toLong().coerceAtLeast(0L))
             }
             return true
-        } catch (_: RuntimeException) { releasePlayerLocked(); return false }
+        } catch (error: RuntimeException) {
+            observe("ALARM_PLAYBACK_ERROR", activeToken, event, "exceptionClass" to error.javaClass.simpleName)
+            releasePlayerLocked()
+            return false
+        }
     }
     private fun createPlayer(uri: Uri?, attributes: AudioAttributes): MediaPlayer? = uri?.let {
         try { MediaPlayer.create(context, it, null, attributes, 0) } catch (_: RuntimeException) { null }
@@ -392,6 +461,7 @@ class AlarmController private constructor(context: Context) {
     }
     private fun stopOutputsLocked() {
         finiteSequence?.cancel()
+        finiteSoundAllowed = false
         finiteSequence = null
         nextFiniteCycle?.let(handler::removeCallbacks)
         nextFiniteCycle = null
@@ -405,6 +475,7 @@ class AlarmController private constructor(context: Context) {
         }
         focusRequest = null
         hasLegacyFocus = false
+        observe("ALARM_OUTPUTS_RELEASED", activeToken, pending.load()?.event)
     }
     private fun releasePlayerLocked() {
         onceCompletion?.let(handler::removeCallbacks)
@@ -418,6 +489,10 @@ class AlarmController private constructor(context: Context) {
         if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             Log.d("AlertKunAlarm", message)
         }
+    }
+    private fun observe(name: String, token: String?, event: AlarmEvent?, vararg values: Pair<String, Any?>) {
+        MonitoringObservation.record(context, name, "alarmToken" to token, "alarmMode" to event?.alarmMode?.name,
+            "soundType" to event?.soundType?.name, "requestedCount" to event?.alarmMode?.finiteCount, *values)
     }
     private fun vibrator(): Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
         context.getSystemService(VibratorManager::class.java)?.defaultVibrator

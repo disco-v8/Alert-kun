@@ -1,4 +1,4 @@
-# AlertKun 開発作業規約
+# Alert-kun 開発作業規約
 
 AI coding agentと開発作業者向けの厳守事項。実装前に[architecture.md](architecture.md)を読み、コード・テストを確認する。概要は[README.md](README.md)、利用方法は[user-guide.md](user-guide.md)へ集約する。
 
@@ -29,7 +29,7 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 - Room保存前・Rule評価前にAlarmを出さない。poll handoff成功後、全対象のPROCESSED・matchedRuleId・色・alertTriggeredをRoomの単一batch transactionで確定する。
 - handoff失敗時は次点へfallbackせずRECEIVEDを残す。handoffとRoom確定の間のprocess停止についてexactly-once保証を謳わない。
 - schema変更時はデータを保持するmigration、schema JSON、migration testを更新する。破壊的migrationを勝手に導入しない。
-- retentionは現在自動削除に未接続。保存期限・一覧絞り込み・削除仕様を暗黙に変更しない。
+- 端末内メール削除は既存mailRetentionDays（default 7）とServerDeletePolicyの選択肢を使い、サーバー削除と分離する。実チェック終了時の既存executionMutex内で、開始時刻が属する毎時0分以降の時間帯に1回だけ実行し、試行記録をDataStoreへ先に永続化する。失敗で監視を失敗扱いにせず、同一時間帯に再試行しない。期限到達済みPROCESSEDの内容を消し一覧から除外するが、RECEIVED復旧・UIDL/UID重複防止・サーバー削除再試行・ヘルス件数に必要な最小記録を残す。保存日数や削除対象を暗黙に変更しない。
 
 ## Rule・priority・snapshot
 
@@ -65,12 +65,12 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 
 ## 警報・preview
 
-- ONCE / THREE_TIMES / FIVE_TIMESは自動終了するprocess内処理。UNTIL_STOPPEDの継続Service経路と混ぜない。
-- 各有限サイクルはisLooping=false、完了・エラー・音源長timeoutでreleaseし、次サイクルを明示的に開始する。autoLoop metadata対策を維持する。
-- 継続開始はexact alarm → AlarmStartReceiver → mediaPlayback AlarmPlaybackService。監視へ流用しない。権限・通知・FGS開始失敗時の単発fallbackと、Audio Focus拒否時の音の開始抑止を維持する。
+- 全警報モードの音声再生は既存mediaPlayback AlarmPlaybackService内で行う。有限回数は直接Service開始、UNTIL_STOPPEDは既存exact alarm → AlarmStartReceiver経路とする。有限回数へexact alarmを追加しない。AlarmModeを再利用し、有限回数はSTART_NOT_STICKYで再開しない。
+- 各有限サイクルはisLooping=false、完了・音源長timeoutでreleaseし、次サイクルを明示的に開始する。エラー時は残りを破棄する。autoLoop metadata対策を維持し、有限回数完了・エラー時にFocus・player・振動・foreground・Serviceを解除する。
+- 警報Serviceを監視へ流用しない。権限・通知・FGS開始失敗時は説明通知と有限回の振動を残し、背景でMediaPlayerを直接再生しない。全モードでFGS開始後にAudio Focusを要求し、拒否時は音を開始しない。
 - 新警報は既存警報を置換しqueueを作らない。Stopはpending開始、timer、残回数、player、振動、通知、Serviceを解除する。
 - soundTypeに対応する音源一覧・標準URIを維持し、種別変更時に旧soundUriを流用しない。有限回数・preview・UNTIL_STOPPEDの再生とAudio Focusは種別ごとのusage / legacy streamを使用する。UNTIL_STOPPEDは継続時間だけを決め、ALARMへの変換やOSの無音・背景音声制約回避に使わない。端末の音量・DNDは変更しない。
-- 継続警報のlive sessionはService activate/破棄に連動させ、Main上部の停止ボタンはactive時だけ表示する。Main・通知・確認ツールは共通AlarmController.stop()へ到達する。画面OFFでもsession・音・振動を継続し、画面OFF後の振動再設定はtoken照合でStop後・置換後に出力を復活させない。スワイプ消去はStopとせず通知だけを復元し、出力を再開始しない。pending/active中の同じメール・Ruleの再handoffは無視する。MediaPlayerのWakeLockは継続警報再生中だけで、監視へ流用しない。
+- 継続警報のlive sessionはService activate/破棄に連動させ、Main上部の停止ボタンはactive時だけ表示する。Main・通知・確認ツールは共通AlarmController.stop()へ到達する。画面OFFでもsession・音・振動を継続し、画面OFF後の振動再設定はtoken照合でStop後・置換後に出力を復活させない。スワイプ消去はStopとせず通知だけを復元し、出力を再開始しない。pending/active中の同じメール・Ruleの再handoffは無視する。MediaPlayerのWakeLockは警報再生中だけで、監視へ流用しない。
 - 警報channelは音・振動なし、実出力はController。端末音量変更・DND回避をしない。
 - previewは共通waveformを1サイクルだけ使用し、初期表示で実行しない。選択変更で旧previewをcancel、NONE・画面離脱で停止する。
 - previewはAlarmEvent・通知・FGS・Room・alertTriggeredを変更しない。所有tokenを維持し、cleanupで後から開始した本番警報を止めない。
@@ -104,6 +104,8 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 - 公開用変更へ実Account情報・credential・秘密鍵・keystoreを追加しない。発見時は値を再掲せず場所を報告し、無断で履歴rewriteしない。
 
 ## UI・テスト・ドキュメント
+
+- 製品表示名は英語「Alert-kun」、日本語「アラートくん」。通知・チャンネル・画面・文書で統一し、AlertKun / Alertkunはコード識別子・クラス名に限る。
 
 - Kotlinは4スペース、classはPascalCase、関数・変数はcamelCase、resourceはlowercase_with_underscores。
 - ユーザー向け文言はEnglishのres/values/strings.xmlと日本語のres/values-ja/strings.xmlへ同時に定義する。enum.nameを表示名に使わない。
