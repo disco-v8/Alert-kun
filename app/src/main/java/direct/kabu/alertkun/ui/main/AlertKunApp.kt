@@ -10,6 +10,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.getValue
 import direct.kabu.alertkun.ui.account.AccountSettingsScreen
 import direct.kabu.alertkun.ui.mail.ReceivedMailScreen
+import direct.kabu.alertkun.ui.mail.ReceivedMailDetailScreen
 import direct.kabu.alertkun.ui.rule.RuleEditScreen
 import direct.kabu.alertkun.ui.rule.RuleSettingsScreen
 import direct.kabu.alertkun.ui.settings.OtherSettingsScreen
@@ -17,6 +18,7 @@ import direct.kabu.alertkun.ui.settings.OtherSettingsScreen
 private object AlertKunRoute {
     const val Main = "main"
     const val ReceivedMail = "received_mail"
+    const val MailDetail = "received_mail/{mailId}"
     const val Rules = "rules"
     const val CreateRule = "rules/create"
     const val EditRule = "rules/edit/{ruleId}?copy={copy}"
@@ -51,7 +53,11 @@ fun AlertKunApp(openMailRequest: Int = 0, openMainRequest: Int = 0) {
             )
         }
         composable(AlertKunRoute.ReceivedMail) {
-            ReceivedMailScreen(onBack = navController::navigateUp)
+            ReceivedMailScreen(onBack = navController::navigateUp,
+                onOpenMail = { id -> navController.navigate("received_mail/${android.net.Uri.encode(id)}") })
+        }
+        composable(AlertKunRoute.MailDetail) { entry ->
+            ReceivedMailDetailScreen(mailId = entry.arguments?.getString("mailId"), onBack = navController::navigateUp)
         }
         composable(AlertKunRoute.Rules) {
             RuleSettingsScreen(

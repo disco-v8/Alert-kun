@@ -147,6 +147,10 @@
     <string name="monitoring_status_date_pattern">MMM d, yyyy HH:mm</string>
     <string name="monitoring_status_no_issues">No issues</string>
     <string name="monitoring_status_silent_recommendation">We recommend setting these notifications to Silent in Android notification settings.</string>
+    <string name="target_sender">Sender</string>
+    <string name="received_mail_detail">Mail details</string>
+    <string name="received_mail_not_found">Mail not found.</string>
+    <string name="received_mail_no_body">The body was not retrieved because it was not needed for rule evaluation.</string>
     <string name="no_configured_mail_account">No mail account is configured</string>
     <string name="monitoring_no_account_start_blocked">No mail account is configured. Configure a mail account before starting monitoring.</string>
     <string name="demo_mode">Demo Mode</string>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Master character silhouette, retaining the existing pictogram contour and safe insets. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_notification_normal"
+    android:insetLeft="26dp" android:insetTop="26dp"
+    android:insetRight="26dp" android:insetBottom="26dp" />

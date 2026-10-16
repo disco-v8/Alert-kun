@@ -50,7 +50,7 @@ fun RuleSettingsScreen(
     Scaffold(
         modifier = modifier,
         topBar = { TopAppBar(title = { Text(stringResource(R.string.rule_settings)) }, navigationIcon = { TextButton(onClick = onBack) { Text(stringResource(R.string.back)) } }) },
-        floatingActionButton = { ExtendedFloatingActionButton(icon = { Text("+") }, onClick = onAddRule, text = { Text(stringResource(R.string.add_rule)) }) },
+        floatingActionButton = { ExtendedFloatingActionButton(modifier = Modifier.testTag("rule_add"), icon = { Text("+") }, onClick = onAddRule, text = { Text(stringResource(R.string.add_rule)) }) },
     ) { innerPadding ->
         RuleListContent(rules, onEditRule, onCopyRule, viewModel::setEnabled, { rulePendingDelete = it }, Modifier.fillMaxSize().padding(innerPadding))
     }
@@ -130,6 +130,7 @@ private fun targetLabel(value: RuleTarget): String = stringResource(
         RuleTarget.SUBJECT -> R.string.target_subject
         RuleTarget.BODY -> R.string.target_body
         RuleTarget.SUBJECT_AND_BODY -> R.string.target_subject_and_body
+        RuleTarget.SENDER -> R.string.target_sender
     },
 )
 

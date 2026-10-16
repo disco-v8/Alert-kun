@@ -20,6 +20,8 @@ class Pop3TestServer(uidls: List<String> = listOf("test-uid-1"), socketFactory: 
     @Volatile var incompleteUidl = false
     @Volatile var loseQuitResponse = false
     var subjects: Map<String, String> = emptyMap()
+    var fromHeaders: Map<String, String> = emptyMap()
+    var bodies: Map<String, String> = emptyMap()
     @Volatile private var closed = false
     private val worker = thread(isDaemon = true, name = "pop3-test-server") {
         while (!closed) {
@@ -41,7 +43,7 @@ class Pop3TestServer(uidls: List<String> = listOf("test-uid-1"), socketFactory: 
         val snapshot = remaining()
         val deleted = mutableSetOf<Int>()
         fun reply(line: String) { writer.write(line + "\r\n"); writer.flush() }
-        fun message(number: Int) = "From: fixture@example.invalid\r\nSubject: ${subjects[snapshot[number - 1]] ?: "ALERT test"}\r\nDate: Mon, 1 Jan 2001 00:00:00 +0000\r\nMessage-ID: <${snapshot[number - 1]}@example.invalid>\r\nContent-Type: text/plain; charset=us-ascii\r\n\r\nDisposable test message\r\n"
+        fun message(number: Int) = "From: ${fromHeaders[snapshot[number - 1]] ?: "fixture@example.invalid"}\r\nSubject: ${subjects[snapshot[number - 1]] ?: "ALERT test"}\r\nDate: Mon, 1 Jan 2001 00:00:00 +0000\r\nMessage-ID: <${snapshot[number - 1]}@example.invalid>\r\nContent-Type: text/plain; charset=us-ascii\r\n\r\n${bodies[snapshot[number - 1]] ?: "Disposable test message"}\r\n"
         reply("+OK dedicated test server")
         while (true) {
             val line = reader.readLine() ?: return // Pending DELE is discarded on abnormal close.

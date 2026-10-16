@@ -30,7 +30,7 @@ import direct.kabu.alertkun.R
 import direct.kabu.alertkun.model.ReceivedMail
 
 @Composable @OptIn(ExperimentalMaterial3Api::class)
-fun ReceivedMailScreen(onBack: () -> Unit, modifier: Modifier = Modifier, viewModel: ReceivedMailViewModel = viewModel()) {
+fun ReceivedMailScreen(onBack: () -> Unit, modifier: Modifier = Modifier, viewModel: ReceivedMailViewModel = viewModel(), onOpenMail: (String) -> Unit = {}) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     Scaffold(modifier = modifier, topBar = { TopAppBar(title = { Text(stringResource(R.string.received_mail)) }, navigationIcon = { TextButton(onClick = onBack) { Text(stringResource(R.string.back)) } }) }) { padding ->
         if (state.loading || state.loadFailed || state.mails.isEmpty()) {
@@ -44,7 +44,7 @@ fun ReceivedMailScreen(onBack: () -> Unit, modifier: Modifier = Modifier, viewMo
         } else {
             LazyColumn(Modifier.fillMaxSize().padding(padding).padding(16.dp).testTag("received_mail_list"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(state.mails, key = { it.id }) { mail ->
-                    ReceivedMailCard(mail)
+                    ReceivedMailCard(mail, onClick = { onOpenMail(mail.id) })
                 }
             }
         }
@@ -52,9 +52,9 @@ fun ReceivedMailScreen(onBack: () -> Unit, modifier: Modifier = Modifier, viewMo
 }
 
 @Composable
-internal fun ReceivedMailCard(mail: ReceivedMail) {
+internal fun ReceivedMailCard(mail: ReceivedMail, onClick: () -> Unit = {}) {
     val colors = mail.backgroundColor.cardColors()
-    Card(Modifier.fillMaxWidth().testTag("received_mail_${mail.id}"),
+    Card(onClick = onClick, modifier = Modifier.fillMaxWidth().testTag("received_mail_${mail.id}"),
         colors = CardDefaults.cardColors(containerColor = colors.background, contentColor = colors.content)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(mail.subject?.takeIf { it.isNotBlank() } ?: stringResource(R.string.received_mail_no_subject), style = MaterialTheme.typography.titleMedium)

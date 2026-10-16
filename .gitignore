@@ -16,3 +16,45 @@ local.properties
 .gradle-user-home/
 .kotlin/
 app/google-services.json
+
+# Build output and local IDE state (no .idea files are tracked).
+**/build/
+/.idea/
+/.idea/deploymentTargetSelector.xml
+/.idea/tasks.xml
+/.idea/shelf/
+/.idea/httpRequests/
+
+# Local signing and service credentials.
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.key
+*.pem
+key.properties
+signing.properties
+service-account*.json
+firebase-admin*.json
+.env
+.env.*
+!.env.example
+
+# OS/editor temporary files and local diagnostics/data.
+Thumbs.db
+*.swp
+*.swo
+*~
+*.log
+*.dump
+*.db
+*.sqlite
+*.sqlite3
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.bak
+*.backup
+*.apk
+*.aab

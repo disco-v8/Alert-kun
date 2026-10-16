@@ -6,6 +6,7 @@ import jakarta.mail.Folder
 import jakarta.mail.Message
 import jakarta.mail.Session
 import jakarta.mail.Store
+import jakarta.mail.internet.InternetAddress
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -25,7 +26,9 @@ abstract class JakartaMailReceiver(
                     accountId = account.id,
                     remoteMessageId = remoteMessageId(folder, message),
                     subject = message.subject,
-                    from = message.from?.joinToString(", "),
+                    from = message.from?.joinToString(", ") { address ->
+                        if (address is InternetAddress) address.toUnicodeString() else address.toString()
+                    },
                     headers = buildMap {
                         message.getHeader("Message-ID")?.firstOrNull()?.let { put("Message-ID", it) }
                         message.sentDate?.time?.let { put("Date", it.toString()) }

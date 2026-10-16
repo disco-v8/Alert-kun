@@ -76,7 +76,7 @@ class MailCheckCoordinator(
 
     private suspend fun receivedMail(remote: RemoteMail, rules: List<AlertRule>): ReceivedMail {
         var candidate = remote
-        if (ruleEngine.evaluate(candidate.subject, candidate.body, candidate.bodyFetched, rules) is RuleEvaluation.BodyRequired) {
+        if (ruleEngine.evaluate(candidate.subject, candidate.body, candidate.bodyFetched, rules, from = candidate.from) is RuleEvaluation.BodyRequired) {
             candidate = candidate.copy(body = receiver.fetchBody(candidate), bodyFetched = true)
         }
         return ReceivedMail(UUID.randomUUID().toString(), candidate.accountId, candidate.remoteMessageId, now(), candidate.from,
@@ -84,7 +84,7 @@ class MailCheckCoordinator(
     }
 
     private fun evaluate(mail: ReceivedMail, rules: List<AlertRule>): EvaluatedMail {
-        return when (val evaluation = ruleEngine.evaluate(mail.subject, mail.body, mail.bodyFetched, rules)) {
+        return when (val evaluation = ruleEngine.evaluate(mail.subject, mail.body, mail.bodyFetched, rules, from = mail.from)) {
             is RuleEvaluation.Match -> {
                 val rule = evaluation.rule
                 val event = AlarmEvent(mail.id, rule.id, rule.name, mail.subject, rule.soundUri, rule.vibrationPattern, rule.alarmMode,

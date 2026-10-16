@@ -140,6 +140,10 @@
     <string name="monitoring_status_date_pattern">yyyy年MM月dd日 HH:mm</string>
     <string name="monitoring_status_no_issues">異常なし</string>
     <string name="monitoring_status_silent_recommendation">※異常なし通知はサイレント通知にされることをおすすめします</string>
+    <string name="target_sender">送信元</string>
+    <string name="received_mail_detail">メール詳細</string>
+    <string name="received_mail_not_found">メールがありません。</string>
+    <string name="received_mail_no_body">ルール判定に本文が不要なため、本文は取得していません。</string>
     <string name="no_configured_mail_account">メールアカウントが設定されていません</string>
     <string name="monitoring_no_account_start_blocked">メールアカウントが設定されていません。メールアカウントを設定してから監視を開始してください。</string>
     <string name="demo_mode">Demo Mode</string>

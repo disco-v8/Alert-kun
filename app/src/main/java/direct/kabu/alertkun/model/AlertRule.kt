@@ -22,6 +22,7 @@ enum class RuleTarget {
     SUBJECT,
     BODY,
     SUBJECT_AND_BODY,
+    SENDER,
 }
 
 enum class AlarmMode(val finiteCount: Int?) {

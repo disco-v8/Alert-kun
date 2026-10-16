@@ -75,14 +75,14 @@ fun RuleEditScreen(
                 value = rule.name,
                 onValueChange = { value -> viewModel.update { it.copy(name = value) } },
                 label = { Text(stringResource(R.string.name)) },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("rule_name"),
                 singleLine = true,
             )
             OutlinedTextField(
                 value = rule.searchText,
                 onValueChange = { value -> viewModel.update { it.copy(searchText = value) } },
                 label = { Text(stringResource(R.string.search_text)) },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("rule_search_text"),
                 singleLine = true,
             )
             EnumSelector(
@@ -90,6 +90,7 @@ fun RuleEditScreen(
                 selected = rule.target,
                 options = RuleTarget.entries,
                 labelFor = ::targetLabel,
+                tag = "rule_target",
             ) { target -> viewModel.update { it.copy(target = target) } }
             OutlinedTextField(
                 value = rule.priority.toString(),
@@ -122,7 +123,7 @@ fun RuleEditScreen(
             Button(
                 onClick = { viewModel.save(onSaved) },
                 enabled = !state.loading,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().testTag("rule_save"),
             ) { Text(stringResource(R.string.save)) }
         }
     }
@@ -148,7 +149,7 @@ private fun RuleEditError.messageResource(): Int = when (this) {
     RuleEditError.SAVE_FAILED -> R.string.validation_save_rule
 }
 
-@Composable private fun targetLabel(value: RuleTarget) = stringResource(when (value) { RuleTarget.SUBJECT -> R.string.target_subject; RuleTarget.BODY -> R.string.target_body; RuleTarget.SUBJECT_AND_BODY -> R.string.target_subject_and_body })
+@Composable private fun targetLabel(value: RuleTarget) = stringResource(when (value) { RuleTarget.SUBJECT -> R.string.target_subject; RuleTarget.BODY -> R.string.target_body; RuleTarget.SUBJECT_AND_BODY -> R.string.target_subject_and_body; RuleTarget.SENDER -> R.string.target_sender })
 
 @Composable
 private fun <T> EnumSelector(

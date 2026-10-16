@@ -98,8 +98,10 @@ fun MainScreen(
             )
             Text(nextScheduledCheck, modifier = Modifier.testTag("monitoring_next_check"))
 
-            NavigationButton(label = stringResource(R.string.received_mail), onClick = onOpenMail)
-            NavigationButton(label = stringResource(R.string.rule_settings), onClick = onOpenRules)
+            NavigationButton(label = stringResource(R.string.received_mail), onClick = onOpenMail,
+                modifier = Modifier.testTag("main_open_mail"))
+            NavigationButton(label = stringResource(R.string.rule_settings), onClick = onOpenRules,
+                modifier = Modifier.testTag("main_open_rules"))
             NavigationButton(label = stringResource(R.string.account_settings), onClick = onOpenAccount)
             NavigationButton(label = stringResource(R.string.settings), onClick = onOpenSettings,
                 modifier = Modifier.testTag("main_open_settings"))

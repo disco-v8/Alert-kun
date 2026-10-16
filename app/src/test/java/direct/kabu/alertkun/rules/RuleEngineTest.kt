@@ -10,6 +10,32 @@ import org.junit.Test
 class RuleEngineTest {
     private val engine = RuleEngine()
 
+    @Test fun senderMatchesAsciiCaseInsensitivelyAndPartially() {
+        val result = engine.evaluate(null, null, false, listOf(rule("sender", RuleTarget.SENDER)), "System <ALERT@example.invalid>")
+        assertEquals("sender", (result as RuleEvaluation.Match).rule.id)
+    }
+
+    @Test fun senderMatchesJapaneseDisplayName() {
+        val senderRule = rule("sender", RuleTarget.SENDER).copy(searchText = "監視担当")
+        assertEquals(senderRule, (engine.evaluate(null, null, false, listOf(senderRule), "監視担当 <sender@example.invalid>") as RuleEvaluation.Match).rule)
+    }
+
+    @Test fun senderMissAndNullDoNotRequestBodyOrMatchSubjectOrBody() {
+        val rules = listOf(rule("sender", RuleTarget.SENDER))
+        assertEquals(RuleEvaluation.NoMatch, engine.evaluate("alert", "alert", false, rules, "other@example.invalid"))
+        assertEquals(RuleEvaluation.NoMatch, engine.evaluate("alert", "alert", false, rules, null))
+    }
+
+    @Test fun senderAndSubjectUseExistingPriorityAndIdOrder() {
+        val sender = rule("a", RuleTarget.SENDER)
+        assertEquals(sender, (engine.evaluate("alert", null, false, listOf(rule("z"), sender), "alert@example.invalid") as RuleEvaluation.Match).rule)
+    }
+
+    @Test fun senderMissStillRequestsBodyWhenBodyRuleNeedsIt() {
+        assertEquals(RuleEvaluation.BodyRequired, engine.evaluate(null, null, false,
+            listOf(rule("sender", RuleTarget.SENDER), rule("body", RuleTarget.BODY)), "other@example.invalid"))
+    }
+
     @Test fun subjectMatchesCaseInsensitivelyAndPartially() = assertMatch("subject", "System ALERT active", null, false, listOf(rule("subject")))
     @Test fun bodyMatches() = assertMatch("body", "normal", "contains alert text", true, listOf(rule("body", RuleTarget.BODY)))
     @Test fun subjectAndBodyMatchesSubject() = assertMatch("both", "alert", null, false, listOf(rule("both", RuleTarget.SUBJECT_AND_BODY)))
