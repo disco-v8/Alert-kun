@@ -140,4 +140,9 @@
     <string name="monitoring_status_date_pattern">yyyy年MM月dd日 HH:mm</string>
     <string name="monitoring_status_no_issues">異常なし</string>
     <string name="monitoring_status_silent_recommendation">※異常なし通知はサイレント通知にされることをおすすめします</string>
+    <string name="no_configured_mail_account">メールアカウントが設定されていません</string>
+    <string name="monitoring_no_account_start_blocked">メールアカウントが設定されていません。メールアカウントを設定してから監視を開始してください。</string>
+    <string name="demo_mode">Demo Mode</string>
+    <string name="demo_mode_description">実際のメールサーバーへ接続せず、テスト用の受信データを使用します。</string>
+    <string name="demo_mode_active">デモモード動作中</string>
 </resources>

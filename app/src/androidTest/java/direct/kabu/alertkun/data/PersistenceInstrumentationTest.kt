@@ -43,7 +43,13 @@ class PersistenceInstrumentationTest {
         try {
             val repository = SettingsRepository.forStore(PreferenceDataStoreFactory.create(scope = scope) { file })
             val defaults = repository.settings.first(); assertEquals(5, defaults.pollIntervalMinutes); assertEquals(7, defaults.mailRetentionDays); assertEquals(3, defaults.consecutiveFailureThreshold)
-            listOf(MonitoringSettings(pollIntervalMinutes = 0), MonitoringSettings(mailRetentionDays = 0), MonitoringSettings(consecutiveFailureThreshold = 100)).forEach { invalid -> try { repository.update(invalid); throw AssertionError("invalid value accepted") } catch (_: IllegalArgumentException) {} }
+            repository.update(defaults.copy(mailRetentionDays = 0))
+            assertEquals(0, repository.settings.first().mailRetentionDays)
+            // SettingsRepository accepts -1..99. Zero is the existing NEVER policy, not an invalid value.
+            listOf(MonitoringSettings(pollIntervalMinutes = 0), MonitoringSettings(mailRetentionDays = -2),
+                MonitoringSettings(mailRetentionDays = 100), MonitoringSettings(consecutiveFailureThreshold = 100))
+                .forEach { invalid -> try { repository.update(invalid); throw AssertionError("invalid value accepted") } catch (_: IllegalArgumentException) {} }
+            assertEquals(0, repository.settings.first().mailRetentionDays)
         } finally { scope.cancel(); file.delete() }
     }
     private fun mail(id: String, accountId: String) = ReceivedMailEntity(id, accountId, "remote", 1, null, "{}", null, null, false, MailProcessingState.RECEIVED, false, null)

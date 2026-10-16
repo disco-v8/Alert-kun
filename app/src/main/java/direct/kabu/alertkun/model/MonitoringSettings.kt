@@ -7,4 +7,5 @@ data class MonitoringSettings(
     val monitoringEnabled: Boolean = false,
     val checkImmediatelyOnAppStart: Boolean = true,
     val healthNotificationEnabled: Boolean = true,
+    val demoModeEnabled: Boolean = false,
 )

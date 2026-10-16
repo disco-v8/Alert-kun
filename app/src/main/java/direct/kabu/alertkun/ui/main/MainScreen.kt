@@ -38,8 +38,12 @@ fun MainScreen(
     modifier: Modifier = Modifier,
     continuousAlarmActive: Boolean = false,
     onStopAlarm: () -> Unit = {},
+    demoModeEnabled: Boolean = false,
+    hasEnabledAccount: Boolean? = null,
 ) {
-    val status = if (monitoringState.isMonitoring) {
+    val status = if (!demoModeEnabled && hasEnabledAccount == false) {
+        stringResource(R.string.no_configured_mail_account)
+    } else if (monitoringState.isMonitoring) {
         stringResource(R.string.monitoring_active_with_interval, pollIntervalMinutes)
     } else {
         stringResource(R.string.monitoring_stopped)
@@ -84,6 +88,10 @@ fun MainScreen(
                 modifier = Modifier.testTag("monitoring_status"),
                 style = MaterialTheme.typography.titleMedium,
             )
+            if (demoModeEnabled) {
+                Text(stringResource(R.string.demo_mode_active), Modifier.testTag("demo_mode_active"),
+                    style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
+            }
             Text(
                 text = stringResource(R.string.last_check, lastSuccessfulCheck),
                 modifier = Modifier.testTag("monitoring_last_check"),

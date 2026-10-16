@@ -38,7 +38,7 @@ class SettingsRepository private constructor(private val store: androidx.datasto
     }
     val settings: Flow<MonitoringSettings> = store.data.map { p ->
         MonitoringSettings(p[POLL] ?: 5, p[RETENTION] ?: 7, p[FAILURE] ?: 3, p[ENABLED] ?: false,
-            p[CHECK_ON_APP_START] ?: true, p[MonitoringHealthPreferences.enabled] ?: true)
+            p[CHECK_ON_APP_START] ?: true, p[MonitoringHealthPreferences.enabled] ?: true, p[DEMO_MODE] ?: false)
     }
     val appLanguage: Flow<AppLanguage> = store.data.map { p -> p[LANGUAGE]?.let { AppLanguage.valueOf(it) } ?: AppLanguage.ENGLISH }
     suspend fun update(settings: MonitoringSettings) {
@@ -90,6 +90,8 @@ class SettingsRepository private constructor(private val store: androidx.datasto
         }
     }
     suspend fun updateAppLanguage(language: AppLanguage) { store.edit { it[LANGUAGE] = language.name } }
+    /** Explicit opt-in only; no monitoring, Gateway, account or existing preference mutations. */
+    suspend fun updateDemoModeEnabled(enabled: Boolean) { store.edit { it[DEMO_MODE] = enabled } }
     /** Only the existing mail_retention_days changes; never reschedule monitoring or register with Gateway. */
     suspend fun updateMailRetentionPolicy(policy: direct.kabu.alertkun.model.ServerDeletePolicy) {
         store.edit { it[RETENTION] = direct.kabu.alertkun.model.LocalMailRetention.days(policy) }
@@ -121,5 +123,6 @@ class SettingsRepository private constructor(private val store: androidx.datasto
         internal val ENABLED = booleanPreferencesKey("monitoring_enabled")
         private val CHECK_ON_APP_START = booleanPreferencesKey("check_immediately_on_app_start")
         private val LANGUAGE = androidx.datastore.preferences.core.stringPreferencesKey("app_language")
+        private val DEMO_MODE = booleanPreferencesKey("demo_mode_enabled")
     }
 }

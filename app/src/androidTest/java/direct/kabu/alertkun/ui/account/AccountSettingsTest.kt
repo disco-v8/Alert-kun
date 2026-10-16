@@ -160,7 +160,7 @@ class AccountSettingsTest {
             compose.waitUntil(5_000) { !vm.state.value.credentialLoading }
             assertFalse(vm.state.value.editor.hasSavedPassword)
             compose.onNodeWithTag("account_primary_action").assertIsNotEnabled()
-            compose.onNodeWithTag("account_connection_disabled_reason").assertIsDisplayed()
+            compose.onNodeWithTag("account_connection_disabled_reason").performScrollTo().assertIsDisplayed()
         } finally { database.close() }
     }
 

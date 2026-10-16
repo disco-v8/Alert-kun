@@ -19,6 +19,14 @@ import direct.kabu.alertkun.alarm.PendingAlarmStore
 import direct.kabu.alertkun.model.AlarmMode
 import direct.kabu.alertkun.model.AlarmSoundType
 import direct.kabu.alertkun.R
+import android.app.ActivityManager
+import android.content.Context
+import direct.kabu.alertkun.alarm.AlarmPlaybackService
+import direct.kabu.alertkun.alarm.AlarmEvent
+import direct.kabu.alertkun.alarm.PendingAlarm
+import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import org.junit.Assert.*
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -71,11 +79,13 @@ class AlarmTestControlsTest {
         try {
             controller.stop()
             composeRule.setContent {
-                AlarmCountSelector(selected.value, "alarm_test_count") { selected.value = it }
-                AlarmTestControls(onStart = {
-                    controller.start(direct.kabu.alertkun.alarm.AlarmEvent("developer-count", "rule", "Rule", null,
-                        null, direct.kabu.alertkun.model.VibrationPattern.NONE, selected.value))
-                }, onStop = { controller.stop() })
+                androidx.compose.foundation.layout.Column {
+                    AlarmCountSelector(selected.value, "alarm_test_count") { selected.value = it }
+                    AlarmTestControls(onStart = {
+                        controller.start(direct.kabu.alertkun.alarm.AlarmEvent("developer-count", "rule", "Rule", null,
+                            null, direct.kabu.alertkun.model.VibrationPattern.NONE, selected.value))
+                    }, onStop = { controller.stop() })
+                }
             }
             for (mode in AlarmMode.entries) {
                 composeRule.onNodeWithTag("alarm_test_count").performClick()
@@ -138,12 +148,82 @@ class AlarmTestControlsTest {
                 composeRule.onNodeWithTag("alarm_test_count").performScrollTo().performClick()
                 composeRule.onNodeWithTag("alarm_test_count_ONCE").performClick()
                 composeRule.onNodeWithTag("alarm_test_start").performScrollTo().performClick()
+                var token: String? = null
                 composeRule.runOnIdle {
+                    val handoff = checkNotNull(PendingAlarmStore(context).load())
+                    token = handoff.token
+                    assertEquals(type, handoff.event.soundType)
+                    assertEquals(AlarmMode.ONCE, handoff.event.alarmMode)
+                    assertNull(handoff.event.soundUri)
                     assertEquals(AlarmState.IDLE, controller.currentState())
-                    assertNull(PendingAlarmStore(context).load())
-                    controller.stop()
                 }
+                assertFiniteServiceAndCleanup(context, controller, checkNotNull(token), 1)
             }
         } finally { controller.stop() }
+    }
+
+    @Test fun allFiniteModesPersistHandoffReachServiceAndCleanUpAfterCompletion() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val controller = AlarmController.getInstance(context)
+        val selected = androidx.compose.runtime.mutableStateOf(AlarmMode.ONCE)
+        val sound = File.createTempFile("finite-controls-", ".wav", context.cacheDir)
+        // Short PCM fixture makes completion checks independent of the device's default sound duration.
+        val samples = 2_400
+        val bytes = ByteBuffer.allocate(44 + samples * 2).order(ByteOrder.LITTLE_ENDIAN)
+        bytes.put("RIFF".toByteArray()).putInt(36 + samples * 2).put("WAVEfmt ".toByteArray())
+            .putInt(16).putShort(1).putShort(1).putInt(8_000).putInt(16_000)
+            .putShort(2).putShort(16).put("data".toByteArray()).putInt(samples * 2)
+        repeat(samples) { bytes.putShort((kotlin.math.sin(it * 2 * Math.PI * 440 / 8_000) * 1_000).toInt().toShort()) }
+        sound.writeBytes(bytes.array())
+        var handoff: PendingAlarm? = null
+        try {
+            controller.stop()
+            composeRule.setContent {
+                androidx.compose.foundation.layout.Column {
+                    AlarmCountSelector(selected.value, "finite_controls_count") { selected.value = it }
+                    AlarmTestControls(onStart = {
+                        controller.start(AlarmEvent("finite-controls", "fixture-rule", "Fixture", null,
+                            sound.toURI().toString(), direct.kabu.alertkun.model.VibrationPattern.NONE, selected.value))
+                        handoff = PendingAlarmStore(context).load()
+                    }, onStop = { controller.stop() })
+                }
+            }
+            for (mode in AlarmMode.entries.filter { it.finiteCount != null }) {
+                composeRule.onNodeWithTag("finite_controls_count").performClick()
+                composeRule.onNodeWithTag("finite_controls_count_${mode.name}").performClick()
+                composeRule.onNodeWithTag("alarm_test_start").performClick()
+                val saved = checkNotNull(handoff)
+                assertEquals(mode, saved.event.alarmMode)
+                assertEquals(sound.toURI().toString(), saved.event.soundUri)
+                assertFiniteServiceAndCleanup(context, controller, saved.token, checkNotNull(mode.finiteCount))
+            }
+        } finally { controller.stop(); sound.delete() }
+    }
+
+    private fun assertFiniteServiceAndCleanup(context: Context, controller: AlarmController, token: String, count: Int) {
+        // Durable activation evidence also handles a short sound completing before the next assertion.
+        composeRule.waitUntil(10_000) {
+            File(context.filesDir, "observability").listFiles().orEmpty().filter { it.isFile }.any { file ->
+                file.useLines { lines -> lines.any { it.contains(" ALARM_FGS_STARTED ") && it.contains("alarmToken=$token") } }
+            }
+        }
+        composeRule.waitUntil(90_000) {
+            PendingAlarmStore(context).load() == null && !context.getSystemService(ActivityManager::class.java)
+                .getRunningServices(Int.MAX_VALUE).any { it.service.className == AlarmPlaybackService::class.java.name }
+        }
+        composeRule.runOnIdle {
+            assertEquals(AlarmState.IDLE, controller.currentState())
+            assertNull(controller.session.value)
+            synchronized(controller) {
+                for (field in listOf("player", "focusRequest")) {
+                    assertNull(AlarmController::class.java.getDeclaredField(field).apply { isAccessible = true }.get(controller))
+                }
+            }
+        }
+        val completedCycles = File(context.filesDir, "observability").listFiles().orEmpty().filter { it.isFile }
+            .sumOf { file -> file.useLines { lines -> lines.count { it.contains(" ALARM_CYCLE_COMPLETED ") && it.contains("alarmToken=$token") } } }
+        assertEquals(count, completedCycles)
+        assertFalse(context.getSystemService(android.app.NotificationManager::class.java).activeNotifications
+            .any { it.id == AlarmController.PLAYBACK_NOTIFICATION_ID })
     }
 }

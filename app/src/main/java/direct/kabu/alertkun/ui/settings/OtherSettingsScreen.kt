@@ -55,6 +55,7 @@ fun OtherSettingsScreen(
     val context = LocalContext.current
     val language by languageViewModel.language.collectAsStateWithLifecycle()
     val monitoringSettings by monitoringViewModel.settings.collectAsStateWithLifecycle()
+    val startBlocked by monitoringViewModel.startBlocked.collectAsStateWithLifecycle()
     var pollInterval by remember { mutableStateOf("") }
     var failureThreshold by remember { mutableStateOf("") }
     var monitoringEnabled by remember { mutableStateOf(false) }
@@ -117,14 +118,21 @@ fun OtherSettingsScreen(
                 Text(stringResource(R.string.check_immediately_on_app_start))
             }
             Button(onClick = { val poll = pollInterval.toIntOrNull(); val threshold = failureThreshold.toIntOrNull(); if (pollValid && thresholdValid) monitoringViewModel.update(poll!!, threshold!!, monitoringEnabled, checkImmediatelyOnAppStart, healthNotificationEnabled) }, enabled = pollValid && thresholdValid, modifier = Modifier.fillMaxWidth().testTag("monitoring_save")) { Text(stringResource(R.string.save_monitoring_settings)) }
+            if (startBlocked) Text(stringResource(R.string.monitoring_no_account_start_blocked), Modifier.testTag("monitoring_start_blocked"))
             HorizontalDivider()
             LocalMailSettingsSection()
             HorizontalDivider(Modifier.testTag("alarm_test_divider"))
             Text(stringResource(R.string.developer_tools), Modifier.testTag("developer_tools"))
-            Button(onClick = monitoringViewModel::queueMatching, modifier = Modifier.fillMaxWidth().testTag("queue_dummy_matching_mail")) { Text(stringResource(R.string.queue_dummy_matching_mail)) }
-            Button(onClick = monitoringViewModel::queueNonMatching, modifier = Modifier.fillMaxWidth().testTag("queue_dummy_non_matching_mail")) { Text(stringResource(R.string.queue_dummy_non_matching_mail)) }
+            androidx.compose.foundation.layout.Row {
+                Checkbox(checked = monitoringSettings.demoModeEnabled, onCheckedChange = monitoringViewModel::setDemoMode,
+                    modifier = Modifier.testTag("demo_mode_enabled"))
+                Text(stringResource(R.string.demo_mode))
+            }
+            Text(stringResource(R.string.demo_mode_description))
+            Button(onClick = monitoringViewModel::queueMatching, enabled = monitoringSettings.demoModeEnabled, modifier = Modifier.fillMaxWidth().testTag("queue_dummy_matching_mail")) { Text(stringResource(R.string.queue_dummy_matching_mail)) }
+            Button(onClick = monitoringViewModel::queueNonMatching, enabled = monitoringSettings.demoModeEnabled, modifier = Modifier.fillMaxWidth().testTag("queue_dummy_non_matching_mail")) { Text(stringResource(R.string.queue_dummy_non_matching_mail)) }
             Button(onClick = monitoringViewModel::runNow, modifier = Modifier.fillMaxWidth().testTag("run_poll_now")) { Text(stringResource(R.string.run_poll_now)) }
-            OutlinedButton(onClick = monitoringViewModel::simulateFailure, modifier = Modifier.fillMaxWidth().testTag("simulate_poll_failure")) { Text(stringResource(R.string.simulate_poll_failure)) }
+            OutlinedButton(onClick = monitoringViewModel::simulateFailure, enabled = monitoringSettings.demoModeEnabled, modifier = Modifier.fillMaxWidth().testTag("simulate_poll_failure")) { Text(stringResource(R.string.simulate_poll_failure)) }
             AlarmPermissionControls()
             AlarmSoundSelector(testSound, testSoundType,
                 onSoundTypeSelected = { type ->

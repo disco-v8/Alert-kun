@@ -16,6 +16,7 @@ data class MainMonitoringUiState(
     val monitoringState: MonitoringState = MonitoringState(false, null, null, 0),
     val settings: MonitoringSettings = MonitoringSettings(),
     val timeZoneRevision: Long = 0L,
+    val hasEnabledAccount: Boolean? = null,
 )
 
 /** Observes durable Worker updates rather than relying only on process-local state. */
@@ -28,6 +29,7 @@ class MainMonitoringViewModel(application: Application) : AndroidViewModel(appli
         MonitoringStatusRepository(application).state,
         SettingsRepository(application).settings,
         MonitoringTimeChangeStore.revision,
-    ) { monitoringState, settings, timeZoneRevision -> MainMonitoringUiState(monitoringState, settings, timeZoneRevision) }
+        direct.kabu.alertkun.data.repository.AccountRepository(direct.kabu.alertkun.data.database.AlertKunDatabase.getInstance(application).accountDao()).accounts,
+    ) { monitoringState, settings, timeZoneRevision, accounts -> MainMonitoringUiState(monitoringState, settings, timeZoneRevision, accounts.any { it.enabled }) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MainMonitoringUiState())
 }

@@ -46,6 +46,8 @@ fun AlertKunApp(openMailRequest: Int = 0, openMainRequest: Int = 0) {
                 onOpenSettings = { navController.navigate(AlertKunRoute.Settings) },
                 continuousAlarmActive = alarmSession != null,
                 onStopAlarm = monitoringViewModel::stopAlarm,
+                demoModeEnabled = monitoring.settings.demoModeEnabled,
+                hasEnabledAccount = monitoring.hasEnabledAccount,
             )
         }
         composable(AlertKunRoute.ReceivedMail) {

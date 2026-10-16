@@ -43,6 +43,8 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 
 ## 監視
 
+- 通常モードでenabled=trueのメールアカウントが0件なら、監視開始前に拒否し、既存monitoringEnabledを変更しない。既に走ったFCM・Worker・手動確認は通信・Dummy・Coordinatorを実行せず正常skipとし、成功・失敗記録へ流用しない。DummyMailReceiverはユーザーが明示的にONにしたDemo Mode（demo_mode_enabled、default false）だけで使用し、実受信と混在させない。アカウントなしを理由にDemoへ自動切替したり、既存設定・Accountを変換したりしない。
+
 - 監視状態通知6004はFCM受信時の表示に加え、正常check結果で既存pollの採用AlarmEvent内容へ更新する。非一致は「異常なし」へ戻す。表示用selectedAlarmはメモリ内の成功結果だけで渡し、警報の再handoff・別候補選定・Room再評価を行わない。専用channelとサイレント判定を維持し、OFF・古い世代の結果で通知を復活させない。observabilityはNORMAL / RULE_MATCHとRECEIPT / CHECK_RESULT、Work IDだけで結果を追跡し、通知内容・件名・差出人・ルール名をログへ出さない。
 
 - FCM受信時の監視状態通知は専用channel alertkun_monitoring_status、固定ID 6004でpost / updateし、OnlyAlertOnceで更新時の再通知を抑える。警報・監視失敗・日次通知とは分離し、監視OFFでcancelする。channelの現在importance / sound / vibrationだけでサイレント相当を判断し、ユーザー設定を上書きしない。通知失敗・権限拒否で既存dispatchを止めず、成功記録・skip・予約を変更しない。永続ログへMONITORING_NOTIFICATION_POST / UPDATE / CANCEL等とFCM照合情報を記録し、既存priorityログを維持する。HIGH配送・deep Doze突破を保証しない。

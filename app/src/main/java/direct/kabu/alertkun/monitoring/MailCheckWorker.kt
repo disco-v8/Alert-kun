@@ -57,6 +57,22 @@ class MailCheckWorker(appContext: Context, parameters: WorkerParameters) : Corou
                 val now = System.currentTimeMillis()
                 val backupInterval = BackupMonitoringPolicy.intervalMinutes(settings.pollIntervalMinutes)
                 val expectedGeneration = execution.scheduleGeneration
+                val selection = MailCheckCoordinatorFactory.select(applicationContext, settings.demoModeEnabled)
+                if (selection.mode == direct.kabu.alertkun.mail.common.MailCheckMode.NO_ACCOUNT) {
+                    monitoringDebugLog(applicationContext, "Mail check skipped: no configured mail account")
+                    observe("WORKER_SKIP", "skipReason" to "NO_CONFIGURED_MAIL_ACCOUNT", "currentGeneration" to expectedGeneration)
+                    // A skip is neither a successful mail check nor a failure. Keep existing scheduling semantics.
+                    if (startupRebase) {
+                        MonitoringScheduler.enqueueRebasedScheduleIfCurrent(applicationContext,
+                            StartupReconcilePolicy.targetAfterCheck(now, settings.pollIntervalMinutes), generation, settings.pollIntervalMinutes)
+                    } else if (trigger == MailCheckTrigger.SCHEDULED_WORK) {
+                        status.advanceBackupWindow(now, generation, backupInterval)
+                        MonitoringStateStore.update(status.current())
+                    }
+                    workerResult = "SUCCESS"
+                    checkResult = "SKIPPED"
+                    return@withLock Result.success()
+                }
                 if (trigger == MailCheckTrigger.SCHEDULED_WORK && BackupMonitoringPolicy.shouldSkipBackup(now, generation, backupInterval, execution)) {
                     observe("WORKER_SKIP", "skipReason" to "RECENT_FCM_SUCCESS", "currentGeneration" to execution.scheduleGeneration,
                         *SkipObservation.fields(now, generation, backupInterval, settings.pollIntervalMinutes, settings.monitoringEnabled, trigger, execution).toList().toTypedArray())
@@ -83,8 +99,10 @@ class MailCheckWorker(appContext: Context, parameters: WorkerParameters) : Corou
                 val checkStarted = android.os.SystemClock.elapsedRealtime()
                 observe("CHECK_START", "generation" to expectedGeneration)
                 try {
-                    val result = DefaultNetworkMonitor(applicationContext, connectionObservation).use { network ->
-                        MailCheckCoordinatorFactory.create(applicationContext, NetworkStabilization(network,
+                    val result = if (selection.mode == direct.kabu.alertkun.mail.common.MailCheckMode.DEMO) {
+                        MailCheckCoordinatorFactory.create(applicationContext, selection, null, connectionObservation).check()
+                    } else DefaultNetworkMonitor(applicationContext, connectionObservation).use { network ->
+                        MailCheckCoordinatorFactory.create(applicationContext, selection, NetworkStabilization(network,
                             { monitoringDebugLog(applicationContext, it) }, observation = connectionObservation), connectionObservation).check()
                     }
                     val completedAt = System.currentTimeMillis()

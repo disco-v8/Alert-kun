@@ -11,21 +11,27 @@ import direct.kabu.alertkun.mail.common.AccountMailReceiver
 import direct.kabu.alertkun.mail.common.DummyMailReceiver
 import direct.kabu.alertkun.mail.common.MailReceiver
 import direct.kabu.alertkun.mail.common.RemoteMail
+import direct.kabu.alertkun.mail.common.MailReceiverSelection
 import direct.kabu.alertkun.model.MailBackgroundColor
 import direct.kabu.alertkun.model.ReceivedMail
 import direct.kabu.alertkun.security.AndroidKeystoreCredentialStore
 import kotlinx.coroutines.flow.first
 
 internal object MailCheckCoordinatorFactory {
-    suspend fun create(context: Context, network: NetworkStabilization, observation: ObservationSink = { _, _ -> }): MailCheckCoordinator {
+    suspend fun select(context: Context, demoModeEnabled: Boolean): MailReceiverSelection =
+        MailReceiverSelection(demoModeEnabled, AccountRepository(AlertKunDatabase.getInstance(context).accountDao()).accounts.first())
+
+    fun create(context: Context, selection: MailReceiverSelection, network: NetworkStabilization?, observation: ObservationSink = { _, _ -> }): MailCheckCoordinator {
         val database = AlertKunDatabase.getInstance(context)
         val mails = MailRepository(database.receivedMailDao())
-        val accounts = AccountRepository(database.accountDao()).accounts.first().filter { it.enabled }
-        val receiver = NetworkStabilizingMailReceiver(if (accounts.isEmpty()) DummyMailReceiver.instance else AccountMailReceiver(accounts, AndroidKeystoreCredentialStore(context), observation = observation,
+        val accounts = selection.accounts
+        val receiver = checkNotNull(selection.receiver(real = { enabledAccounts ->
+            NetworkStabilizingMailReceiver(AccountMailReceiver(enabledAccounts, AndroidKeystoreCredentialStore(context), observation = observation,
             localProcessedMails = mails::deleteCandidatesForAccount, resolveDeletes = mails::resolveDeletes) {
             monitoringDebugLog(context, it)
-        }, network, accounts.any { it.protocol in listOf(direct.kabu.alertkun.model.MailProtocol.POP3, direct.kabu.alertkun.model.MailProtocol.POP3S)
+        }, checkNotNull(network), enabledAccounts.any { it.protocol in listOf(direct.kabu.alertkun.model.MailProtocol.POP3, direct.kabu.alertkun.model.MailProtocol.POP3S)
             && it.serverDeletePolicy != direct.kabu.alertkun.model.ServerDeletePolicy.NEVER })
+        }, demo = { DummyMailReceiver.instance }))
         return MailCheckCoordinator(
             mailStore = object : MonitoringMailStore {
                 override suspend fun finalizeBatch(outcomes: List<direct.kabu.alertkun.model.MailProcessingOutcome>) {
@@ -34,7 +40,11 @@ internal object MailCheckCoordinatorFactory {
                     monitoringDebugLog(context, "Room finalize batch completed count=${outcomes.size}")
                 }
                 override suspend fun findByRemoteId(accountId: String, remoteMessageId: String) = mails.getByRemoteId(accountId, remoteMessageId)
-                override suspend fun receivedMails() = mails.receivedMails()
+                override suspend fun receivedMails() = mails.receivedMails().filter {
+                    if (selection.mode == direct.kabu.alertkun.mail.common.MailCheckMode.DEMO)
+                        it.accountId == DummyMailReceiver.DUMMY_ACCOUNT_ID
+                    else it.accountId != DummyMailReceiver.DUMMY_ACCOUNT_ID
+                }
                 override suspend fun saveReceived(mail: ReceivedMail): Boolean = try { mails.saveReceived(mail); true } catch (_: android.database.sqlite.SQLiteConstraintException) { false }
                 override suspend fun finalizeProcessing(id: String, alertTriggered: Boolean, matchedRuleId: String?, backgroundColor: MailBackgroundColor) = mails.finalizeProcessing(id, alertTriggered, matchedRuleId, backgroundColor)
             },
