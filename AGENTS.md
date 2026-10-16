@@ -54,7 +54,7 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 - Mainの「次回確認」は現在の主監視設定に有効なFCM受信時刻（未受信ならGateway登録／設定成功時刻）＋確認間隔から導出し、「yyyy/MM/dd HH:mm頃」で表示する。OFFは「なし」、有効な基準なしは「未定」。最終確認・WorkManager保険予約を流用せず、予定超過で自動繰り上げ・待機／遅延／異常表示をしない。異常検出は既存の保険・失敗通知が担当する。
 - Mainの「最終確認」は実メールチェック全体が正常完了した最新時刻とする。FCM受信・Worker起動・backup skip・削除失敗では更新しない。監視OFF時の明示的な手動確認成功も対象とする。
 - 主監視設定のrevisionはON/OFF・間隔・MasterID変更と同じDataStore editで更新する。保険用scheduleGenerationは起動／時計補正でも変わるため主監視のsession識別に流用しない。古いrevisionのFCM基準・Gateway成功応答を現在予定へ混入させず、予定時刻自体を永続化しない。token再登録がGatewayの送信基準を変えるかはサーバー仕様で確認し、推測で変更しない。
-- 現在のGatewayは同じtoken・intervalでの間隔登録も成功時に送信基準時刻をリセットする。token再登録も成功確認時刻を新しい初期基準にし、それ以前のFCM基準を解除する。成功後の受信は保持し、失敗時は既存正常基準を上書きしない。将来API変更時はこの前提を再確認する。
+- 現在のGatewayは同じtoken・intervalでの間隔登録も成功時に送信基準時刻をリセットする。token再登録も成功確認時刻を新しい初期基準にし、それ以前のFCM基準を解除する。成功後の受信は保持し、失敗時は既存正常基準を上書きしない。将来API変更時はこの外部仕様を再確認する。
 
 - default network changeはINTERNET / VALIDATEDを補助情報として、1チェック全体で安定化とretry間隔の待機を合わせて合計最大8秒を行う。default networkが存在すれば実メール接続結果を最終判定とし、読み取り通信の型で判定できる一時的ネットワーク例外だけ、networkChangedの有無によらず1チェック全体で最大2回retry（読み取り通信は最大3試行）する。retry間隔は3秒・5秒を基本とし共有待機予算の残りまで短縮、残り予算3秒未満では即retryせず失敗を返す。auth / TLS / certificate / protocolエラーはretryしない。復旧して正常完了した途中のエラーをfailure countへ加算しない。Coordinator・警報・削除全体を再実行せず、メール保存・警報の重複を防ぎ、callbackを終了・キャンセル時に解除する。
 
@@ -104,6 +104,9 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 - fingerprintを計算・承認・保存・比較しない。INSECUREへの自動fallbackを行わず、受信・POP3削除・接続テストは共通MailConnectionSettingsを維持する。
 - backupは認証情報復元を保証しない。変更時はKeystore鍵と暗号文の関係を検証する。
 - 公開用変更へ実Account情報・credential・秘密鍵・keystoreを追加しない。発見時は値を再掲せず場所を報告し、無断で履歴rewriteしない。
+- 公開前secret auditはworking treeに加え、全branch・tagから到達するGit履歴と削除済みファイル履歴も対象とする。秘密情報を発見したら値を再掲せず、ファイルパス・commit等の場所だけを報告してSTOPする。履歴rewriteは別途明示許可を得る。文書整備だけの依頼をsecret scan実施の許可と解釈しない。
+- 公開対象はAndroidクライアント。非公開のGatewayサーバー実装、内部DB構造、ログ名・内部パス・保存先・運用インフラ構成を公開文書やリポジトリへ転記しない。Privacy Policyは扱う情報・目的・第三者サービス・保存と削除を利用者視点で説明し、未確認の保持日数を推測しない。
+- ソースコードはBSD 3-Clause、キャラクター画像はCC BY-NC-ND 4.0とし、[LICENSE](LICENSE)と[artwork/README.md](artwork/README.md)の適用範囲を維持する。Release 1.0はGitHub Releasesで署名済みAPKを配布する方針とし、署名鍵・署名用パスワードはGit管理しない。
 
 ## UI・テスト・ドキュメント
 

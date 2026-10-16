@@ -1,14 +1,14 @@
 # Alert-kun
 
-**アラートくん**は、メールアカウントを定期確認し、件名や本文がルールに一致したときに、Android端末の音・振動・通知で知らせるメール監視型アラートアプリです。システムの異常通知など、メールで届く情報を端末上で確認する用途を想定しています。
+**アラートくん**は、メールアカウントを定期確認し、件名・本文・送信元がルールに一致したときに、Android端末の音・振動・通知で知らせるメール監視型アラートアプリです。システムの異常通知など、メールで届く情報を端末上で確認する用途を想定しています。
 
 ## Features
 
 - POP3 / POP3S / IMAP4 / IMAPSによる受信と接続テスト
-- 件名・本文の部分一致ルール、優先順位による1回の確認全体での警報選定
+- 件名・本文・送信元の部分一致ルール、優先順位による1回の確認全体での警報選定
 - 1回・3回・5回・停止まで継続の警報、アラーム・通知・着信カテゴリの音選択
 - 振動パターンと設定時のプレビュー
-- 受信メール一覧と、各メールに保存されるルールの背景色
+- 受信メール一覧・保存済み本文の詳細表示と、各メールに保存されるルールの背景色
 - 端末内受信メールの期限削除（初期値1週間、毎時最初の実メール確認時）
 - AccountごとのPOP3 / POP3Sサーバー削除ポリシー
 - FCMによる主監視、WorkManagerによるバックアップ確認、連続失敗時の通知
@@ -18,15 +18,24 @@
 - 過去24時間の監視が正常な場合に1日1回知らせる、静かな監視ステータス通知
 - Android Keystoreを利用したパスワード保護
 
-現在は開発中です。主要機能は実装されていますが、公開releaseの配布フローは未整備で、ライセンスも未選定です。既知の制約は[user-guide.md](user-guide.md)と[architecture.md](architecture.md)に記載しています。
+Release 1.0はGitHub Releasesで署名済みAPKを配布する方針です。AndroidクライアントのソースコードをBSD 3-Clause Licenseで公開し、キャラクター画像には別ライセンスを適用します。
 
 ## Requirements
 
 - Android 7.0（API 24）以上
+- 動作確認済み実機：Pixel 7a / Android 17。最低対応OSを含むすべての端末・OSでの動作を確認したものではありません。
 - メールサーバーへのネットワーク接続と、対応プロトコルで利用できるアカウント
 - 通知の許可。「停止まで継続」の自動開始には、対応Androidで「アラームとリマインダー」の許可も必要
 
 開発時はAndroid Studio、Android SDK 37、Gradle wrapperに対応するGradle JDKを使用します。compileSdk / targetSdkは37です。
+
+## インストール
+
+Google Playでは配布しません。このリポジトリの「Releases」から、対象バージョンの署名済みAPKを取得して端末で開いてください。未公開の場合はRelease 1.0の公開をお待ちください。
+
+ブラウザやファイル管理アプリに対して「この提供元のアプリを許可」など、提供元不明アプリのインストール許可が必要になる場合があります。画面の案内に従い、インストール後は必要に応じて許可を戻してください。更新時は同じ配布元のAPKを使用し、設定を保持するためアンインストールせず上書き更新してください。署名が異なるAPKでは上書きできません。
+
+初期設定は[user-guide.md](user-guide.md)を参照してください。利用前に[Privacy Policy](PRIVACY.md)をご確認ください。
 
 ## Build
 
@@ -38,15 +47,23 @@ Android Studioでリポジトリを開き、SDKと依存関係を準備します
 .\gradlew.bat lint
 ```
 
-Debug APKはapp/build/outputs/apk/debug/app-debug.apkに生成されます。端末・エミュレータでのテストは、接続後に .\gradlew.bat connectedAndroidTest を使用します。サーバー設定やパスワードはビルドに不要です。
+Debug APKはapp/build/outputs/apk/debug/app-debug.apkに生成されます。FCMを利用する開発ビルドでは、自分のFirebaseプロジェクトの`app/google-services.json`をローカルに用意します。メールサーバーの設定やパスワードはビルドに不要です。instrumentationは専用の試験端末・エミュレーターで実行し、実運用端末ではGradleによるアプリの再インストールや試験データの変更を行わないでください。
+
+Release APKは署名済みで配布します。署名鍵とそのパスワードはGit管理しません。
 
 ## 利用開始
 
-FCM Gateway端末登録には`app/google-services.json`をローカルに配置し、端末の設定画面でMyDNS.JP MasterIDとMasterPwdを保存します。初回はHTTPSでGatewayへ一次認証し、発行されたdeviceTokenをAndroid Keystoreで暗号化して保存します。以後はdeviceTokenのBearer認証を使用し、Bearer失効時だけMyDNS資格情報で再認証します。
+FCM主監視には、端末の設定画面でMyDNS.JP MasterIDとMasterPwdを保存します。初回はHTTPSでGatewayへ一次認証し、発行されたdeviceTokenをAndroid Keystoreを利用して暗号化保存します。以後はdeviceTokenのBearer認証を使用し、Bearer失効時だけMyDNS資格情報で再認証します。配布APKの利用者がFirebase設定ファイルを配置する必要はありません。
 
 メールアカウントの接続テストと保存、ルール設定を行い、通知・継続警報に必要な権限を許可して監視を有効にします。FCMが設定間隔の主監視となり、WorkManagerは設定間隔と15分の大きい方を周期とするバックアップです。MasterID未設定でもバックアップ確認は継続します。詳しい操作は[user-guide.md](user-guide.md)を参照してください。
 
 通常モードでは有効なメールアカウントがなければ監視を開始できず、既に届いた確認要求も通信せず正常にスキップします。ダミーメールへの自動切替はありません。設定の確認ツールで「Demo Mode」（初期値OFF）を明示的にONにした場合だけ、実メール接続の代わりにダミーデータを使い、Mainにデモモードと表示します。
+
+## Gatewayとプライバシー
+
+GatewayはGoogle Firebase Cloud Messaging（FCM）を通じてメール確認のきっかけを端末へ送ります。メールの取得とルール判定はAndroid端末で行います。メールサーバーの認証情報、受信メールの本文・件名・送信元はGatewayへ送信しません。
+
+OSSとして公開するのはAndroidクライアントです。Gateway / FCMサーバー側実装は非公開で、このリポジトリには含めません。Gatewayで扱う認証・登録情報や運用ログについては[PRIVACY.md](PRIVACY.md)を参照してください。
 
 監視中のFCM受信では専用の「異常なし」通知を1件更新します。音を避けたい場合はAndroidの通知設定で「監視状態」をサイレントにできます。警報・監視失敗・1日1回の通知とは別チャンネルです。
 
@@ -59,6 +76,8 @@ FCM Gateway端末登録には`app/google-services.json`をローカルに配置�
 | [user-guide.md](user-guide.md) | 初期設定、日常操作、警報・削除設定、困ったときの確認 |
 | [architecture.md](architecture.md) | 現在の内部構造、永続化、受信・監視・警報の動作仕様 |
 | [AGENTS.md](AGENTS.md) | AI・開発作業者が守る設計原則と変更時の注意 |
+| [PRIVACY.md](PRIVACY.md) | 端末・Gateway・FCMで扱う情報、利用目的、保存と削除 |
+| [artwork/README.md](artwork/README.md) | キャラクター画像の対象ファイルと利用条件 |
 
 ## 注意事項
 
@@ -66,6 +85,18 @@ Androidのバックグラウンド制限により確認時刻は遅れること�
 
 「サーバーからメール削除」はPOP3 / POP3Sだけに対応し、初期値は「削除しない」です。端末内だけを対象とする「内部からメール削除」は別設定で、初期値は1週間です。削除後は一覧から除外しますが、重複受信・再警報を防ぐ最小記録は保持します。有効にする前に利用ガイドを読み、削除専用のテストメールで確認してください。TLS検証は「厳密に検証する」「ホスト名の不一致を許可する」「自己署名証明書を許可する」「検証しない」の4モードです。自己署名でも期限・ホスト名を検証し、fingerprintは使用しません。「検証しない」は明示選択時だけ適用し、自動fallbackは行いません。IMAP削除、JSON Export / Importは現在未対応です。
 
+## 未対応機能・問い合わせ
+
+JSON Export / Import、添付ファイル表示、IMAPサーバー側メール削除、OAuth専用認可UI、複数アカウント追加導線の改善、独自BOOT_COMPLETED reconcileは現在未対応です。今後のバージョンでの実装を検討しますが、対応を約束するものではありません。安全上の制約も含め、詳細は[user-guide.mdの「現在の制約」](user-guide.md#20-現在の制約)を参照してください。
+
+問い合わせ・不具合報告は、このリポジトリの「Issues」を基本窓口とします。投稿前に[PRIVACY.mdの問い合わせ案内](PRIVACY.md#問い合わせ)をご確認ください。
+
 ## License
 
-License selection pending. 現在LICENSEファイルはありません。公開・再配布時の条件は未確定です。
+Copyright (c) 2026 Future Versatile Group/MyDNS.JP
+
+ソースコードは[BSD 3-Clause License](LICENSE)です。依存ライブラリにはそれぞれのライセンスが適用されます。
+
+Alert-kunキャラクター画像はソースコード用BSD 3-Clauseの対象外で、[CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/)を適用します。著作権は放棄しません。対象と条件は[artwork/README.md](artwork/README.md)を参照してください。
+
+本リポジトリ全体がBSD 3-Clauseで提供されるものではなく、キャラクター画像を含む再配布にはCC BY-NC-ND 4.0の条件が別途適用されます。

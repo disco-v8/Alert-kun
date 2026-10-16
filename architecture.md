@@ -33,7 +33,9 @@ MainActivityのprocess内初回起動でFcmRegistrationCoordinatorがFirebaseMes
 
 Gateway登録はSettingsRepositoryのDataStoreキーmydns_master_idが空でない場合に行う。初回またはBearer失効時のみ、保存済みMasterID・CredentialStoreのMasterPwd・現在FCM tokenでHTTPS /authへ一次認証する。返却deviceTokenは既存AndroidKeystoreCredentialStoreのfcm_gateway_device_token_v1へAES/GCMで暗号化保存し、Room・DataStoreへ保存しない。MasterID・MasterPwd・deviceToken・Authorization・FCM token（一部を含む）・HTTP本文・例外messageはログに出さない。
 
-FcmTokenRegistrarは標準HttpsURLConnectionでhttps://fcm.gpg.jp:8119/alertkun-api/のauth / set-intervalをPOSTする。標準TLS・ホスト名検証を使用し、redirectは追従しない。接続・読取timeoutは各15秒、応答解析は8192文字まで。HTTP 200とJSON status="success"の両方で成功とし、authでは非空のdeviceTokenも必要。set-intervalはAuthorization: Bearerを必須とし、JSONはfcmtoken / rcvintervalだけ。401時だけ保存Bearerを削除して一次認証・set-interval再試行を最大1回行い、再試行も401ならBearerを削除して終了する。503・timeout・TLS・その他401以外の失敗ではtokenを削除しない。HTTP・network・JSON・応答status・credential保存エラーを区別する。
+FcmTokenRegistrarは標準HttpsURLConnectionでGatewayの認証・間隔登録APIへPOSTする。標準TLS・ホスト名検証を使用し、redirectは追従しない。接続・読取timeoutは各15秒、応答解析は8192文字まで。HTTP 200とJSON status="success"の両方で成功とし、authでは非空のdeviceTokenも必要。set-intervalはAuthorization: Bearerを必須とし、JSONはfcmtoken / rcvintervalだけ。401時だけ保存Bearerを削除して一次認証・set-interval再試行を最大1回行い、再試行も401ならBearerを削除して終了する。503・timeout・TLS・その他401以外の失敗ではtokenを削除しない。HTTP・network・JSON・応答status・credential保存エラーを区別する。
+
+現在のFCM data payloadはaction=CHECK_MAILだけで、メール内容やメールサーバーの認証情報を含まない。メールサーバーへの接続とルール判定は端末側で行う。Gateway / FCMサーバー側実装は非公開で、本リポジトリにはAndroidクライアントだけを含める。情報の取り扱いは[PRIVACY.md](PRIVACY.md)を参照し、サーバーの内部構成は本書に記載しない。
 
 rcvintervalは登録直前にSettingsRepositoryから現在のpollIntervalMinutesを読む（1～1500分）。DataStoreの同一snapshotからMasterID・間隔・監視ON/OFF・主監視revisionをdistinctUntilChangedで監視し、初回・設定変更で現在tokenを取得して再登録する。onNewTokenは既存Bearerのset-intervalへ新FCM tokenを送り、401時だけ再認証する。MasterPwdだけの変更もprocess内通知で再登録する。MasterID空欄は正常skip、一次認証に必要なMasterPwd未設定では通信しない。監視OFFでも既存登録は維持するが表示基準を作らず、OFF→ONで新しい登録を行う。Gateway送信停止・削除APIは追加しない。登録は独立SupervisorJob内で直列化し、失敗を監視へ伝播させない。process終了を跨ぐ登録保証・永続retryはなく、次回アプリ起動・token更新・設定変更が次の機会になる。
 
@@ -84,7 +86,7 @@ AccountCredentialSaverはRoomとCredentialStoreが共通トランザクション
 
 保存済みパスワードはUIへ実値を戻さず固定マスクを表示する。空入力は既存値を保持し、新しい入力がある場合だけ変更する。マスク文字列はeditor値・保存値として使わない。
 
-ManifestはallowBackup=true。現在のbackup / data extraction規則はpending_alarm.xmlを除外するが、暗号化認証情報のSharedPreferencesは除外していない。Keystore鍵を含む端末移行・復元の成功は保証しない。復元後は認証情報の再入力が必要になる場合がある。
+ManifestはallowBackup=true。現在のbackup / data extraction規則はpending_alarm.xmlと端末内観測ログを除外するが、暗号化認証情報のSharedPreferencesは除外していない。Keystore鍵を含む端末移行・復元の成功は保証しない。復元後は認証情報の再入力が必要になる場合がある。
 
 ## 3. メール通信と識別
 
@@ -115,6 +117,8 @@ TLSモードはRoom v5のTEXT列に保存する。初期値・4→5 migration・
 - 現在のfetchNewMessagesはサーバー上のメール一覧のヘッダーを取得する。既受信メールの除外は最終的にRoom UNIQUE制約で行う。サーバー側差分取得やUIDL一覧だけによる先行除外を実装済みとして扱わない。
 
 本文が必要と判断された場合、対象リモートIDの本文を別途取得する。plain textを優先し、HTMLしかない場合はタグ等を除去する。添付はローカル保存・表示・ルール判定の対象にしない。ただしMIME content取得時の通信量について、添付の転送自体を完全に抑止する保証はない。
+
+FromはJakartaMailReceiverでInternetAddress.toUnicodeString()によりMIME encoded-wordの表示名をデコードし、既存のRemoteMail.from → ReceivedMail.fromへ保存する。RuleEngineへこの文字列を渡し、SENDERも件名・本文と同じcontains(searchText, ignoreCase = true)で比較する。送信元ルールだけでは本文取得を要求しない。検索対象は既存TEXT列にSENDERを保存し、schema変更・重複フィールド追加は行わない。既存保存行のFromは書き換えない。
 
 通常モードではenabled=trueのAccountだけをAccountMailReceiverが処理する。複数Accountの候補は1回のCoordinator全体で比較する。有効Accountが0件なら実通信・Dummy・Coordinatorを実行せず、正常skipする。MailReceiverSelectionは既存enabled判定だけを使用し、接続先等の新しいvalidationは行わない。
 
@@ -154,6 +158,7 @@ RuleEngineはAndroid framework、Room、通信、通知から独立した純粋�
 | SUBJECT / 件名 | 件名に検索文字列を含む |
 | BODY / 本文 | 本文に検索文字列を含む |
 | SUBJECT_AND_BODY / 件名と本文 | 件名または本文に含む。ANDではない |
+| SENDER / 送信元 | デコード後のFromに検索文字列を含む |
 
 1メール内の一致Ruleはpriority昇順、同値ならRule id昇順で1件を選ぶ。数値が小さいほど高優先。
 
@@ -302,11 +307,11 @@ Gateway成功はHTTP 2xxかつJSON status=successを確認した完了時刻だ�
 
 MonitoringStatusRepositoryのFlowをMainのStateFlowで購読し、新FCM・Gateway成功・設定変更を画面再オープンなしで反映する。期限を過ぎても同じ日時を保持し、時計だけの周期繰り上げ・毎秒／毎分タイマー・待機／遅延／リトライ表示を追加しない。FCM未達そのものはMainで異常扱いせず、既存の保険による実接続と連続失敗通知が異常認識を担当する。表示状態は実行mutex・保険skip・警報・メール処理へ影響しない。
 
-現在のGatewayの外部仕様では、同じtoken・間隔での間隔登録も成功時に送信基準時刻をリセットする。したがってtoken再登録・アプリ起動時再登録も、成功時にGatewayの送信基準時刻がリセットされる。端末は成功応答確認時刻を新しい初期基準とし、その時刻以前のFCM基準を解除する。応答成功後に受信したFCMが先に保存された場合は保持し、古い受信の遅延保存は拒否する。失敗では現在設定の既存正常基準を維持する。将来APIがtoken同期のみへ変わる場合は、サーバーの動作を再確認してこの処理も変更する。
+現在のGatewayの外部仕様では、同じtoken・間隔での間隔登録も成功時に送信基準をリセットする。したがってtoken再登録・アプリ起動時再登録でも、端末は成功応答確認時刻を新しい初期基準とし、その時刻以前のFCM基準を解除する。応答成功後に受信したFCMが先に保存された場合は保持し、古い受信の遅延保存は拒否する。失敗では現在設定の既存正常基準を維持する。将来APIがtoken同期のみへ変わる場合は、外部仕様を再確認してこの処理も変更する。
 
 設定変更後、Gatewayが現在revisionの設定成功を返すまで、新たなFCMから表示基準は作らない。CHECK_MAIL payloadには間隔・revisionがないため、設定変更失敗後に旧Gatewayスケジュールで届いたFCMを新間隔の成功証明にしないためである。メール確認のhandoffは行い、表示は未定に保つ。
 
-ReceivedMail一覧は件名、差出人、初回受信日時、snapshot色を表示し、本文詳細・matchedRuleId・alertTriggeredの表示UIはない。
+ReceivedMail一覧は件名、差出人、初回受信日時、snapshot色を表示する。カードのタップでreceived_mail/{mailId}へ進み、件名・送信元・初回受信日時・保存済みbodyを表示する。詳細は既存ReceivedMailViewModelのRoom observeAllフローからIDで選び、locallyDeletedの除外と表示中の削除に追従する。未取得・空本文は代替文、対象なしはメールなし、読込失敗は既存エラー文を表示する。本文はCompose Textで改行を保持して縦スクロールし、再接続・HTMLレンダリングは行わない。戻る操作は一覧へ戻る。matchedRuleId・alertTriggeredの表示UIはない。
 
 ## 9. 警報・有限回数
 
@@ -406,4 +411,6 @@ Windowsのリポジトリrootから実行:
 
 ## 15. 未対応機能
 
-現在未対応なのは、JSON Export / Import、メール本文詳細・添付表示、IMAP削除、独自boot時reconcile、公開release配布フロー。OAuth専用の認可UIはない。ライセンスは未選定でLICENSEファイルもない。
+JSON Export / Import、添付表示、IMAPサーバー側削除、OAuth専用認可UI、複数アカウント追加導線の改善、独自BOOT_COMPLETED reconcileは現在未対応。今後のバージョンでの実装を検討するが、実装を約束しない。
+
+Release 1.0はGitHub Releasesで署名済みAPKを配布する方針で、Google Play配布ではない。署名鍵はGit管理しない。ソースコードは[BSD 3-Clause License](LICENSE)、キャラクター画像は別の[CC BY-NC-ND 4.0](artwork/README.md)を適用する。利用者向けの配布・問い合わせ案内は[README.md](README.md)へ集約する。
