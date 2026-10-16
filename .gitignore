@@ -58,3 +58,4 @@ Thumbs.db
 *.backup
 *.apk
 *.aab
+/app/release/
