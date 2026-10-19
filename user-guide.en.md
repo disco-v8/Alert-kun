@@ -2,6 +2,8 @@
 
 Alert-kun requires Android 8.0 (API 26) or later. See the [Japanese user guide](user-guide.md) for the complete screen-by-screen instructions, and the [Privacy Policy](PRIVACY.md) for data handling.
 
+**A MyDNS.JP account is required to use FCM-based periodic monitoring.** Enter and save the account's MasterID and MasterPwd under “MyDNS.JP User Information” in Settings.
+
 ## Recommended mailbox and message format
 
 Use a mailbox dedicated to Alert-kun or monitoring notifications. Sharing a personal or general business mailbox is not recommended, especially when server deletion is enabled. This is a recommendation, not a registration restriction.
