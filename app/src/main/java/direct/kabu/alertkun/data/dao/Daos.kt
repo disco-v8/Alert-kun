@@ -15,10 +15,12 @@ import kotlinx.coroutines.flow.Flow
 @Dao interface AccountDao { @Query("SELECT * FROM accounts") fun observeAll(): Flow<List<MailAccountEntity>>; @Query("SELECT * FROM accounts WHERE id = :id") suspend fun getById(id: String): MailAccountEntity?; @Upsert suspend fun upsert(entity: MailAccountEntity); @Query("DELETE FROM accounts WHERE id = :id") suspend fun delete(id: String) }
 @Dao interface RuleDao { @Query("SELECT * FROM rules ORDER BY priority ASC") fun observeAll(): Flow<List<AlertRuleEntity>>; @Query("SELECT * FROM rules WHERE id = :id") suspend fun getById(id: String): AlertRuleEntity?; @Upsert suspend fun upsert(entity: AlertRuleEntity); @Query("DELETE FROM rules WHERE id = :id") suspend fun delete(id: String) }
 @Dao interface ReceivedMailDao {
-    @Query("SELECT id, receivedAtEpochMillis FROM received_mails WHERE locallyDeleted = 0 AND processingState = 'PROCESSED'")
+    @Query("SELECT remoteMessageId FROM received_mails WHERE accountId = :accountId")
+    suspend fun knownRemoteIds(accountId: String): List<String>
+    @Query("SELECT id, receivedAtEpochMillis FROM received_mails WHERE locallyDeleted = 0 AND processingState IN ('PROCESSED', 'UNSUPPORTED')")
     suspend fun localRetentionCandidates(): List<direct.kabu.alertkun.data.entity.LocalRetentionCandidate>
 
-    @Query("UPDATE received_mails SET locallyDeleted = 1, `from` = NULL, headersJson = '{}', subject = NULL, body = NULL, bodyFetched = 0, matchedRuleId = NULL, backgroundColor = 'DEFAULT' WHERE id IN (:ids) AND locallyDeleted = 0 AND processingState = 'PROCESSED'")
+    @Query("UPDATE received_mails SET locallyDeleted = 1, `from` = NULL, headersJson = '{}', subject = NULL, body = NULL, bodyFetched = 0, matchedRuleId = NULL, backgroundColor = 'DEFAULT' WHERE id IN (:ids) AND locallyDeleted = 0 AND processingState IN ('PROCESSED', 'UNSUPPORTED')")
     suspend fun redactLocalMails(ids: List<String>): Int
 
     @androidx.room.Transaction
@@ -29,7 +31,7 @@ import kotlinx.coroutines.flow.Flow
         return ids.chunked(500).sumOf { redactLocalMails(it) }
     }
 
-    @Query("UPDATE received_mails SET serverDeleteResolution = :resolution WHERE accountId = :accountId AND remoteMessageId = :uidl AND processingState = 'PROCESSED' AND serverDeleteResolution NOT IN ('DELETED', 'ABSENT')")
+    @Query("UPDATE received_mails SET serverDeleteResolution = :resolution WHERE accountId = :accountId AND remoteMessageId = :uidl AND processingState IN ('PROCESSED', 'UNSUPPORTED') AND serverDeleteResolution NOT IN ('DELETED', 'ABSENT')")
     suspend fun resolveDelete(accountId: String, uidl: String, resolution: direct.kabu.alertkun.model.ServerDeleteResolution): Int
     @androidx.room.Transaction
     suspend fun resolveDeletes(accountId: String, deleted: Set<String>, absent: Set<String>): Pair<Int, Int> {
@@ -41,7 +43,7 @@ import kotlinx.coroutines.flow.Flow
         return deletedCount to absentCount
     }
 
-    @Query("SELECT * FROM received_mails WHERE accountId = :accountId AND processingState = 'PROCESSED' AND serverDeleteResolution NOT IN ('DELETED', 'ABSENT')")
+    @Query("SELECT * FROM received_mails WHERE accountId = :accountId AND processingState IN ('PROCESSED', 'UNSUPPORTED') AND serverDeleteResolution NOT IN ('DELETED', 'ABSENT')")
     suspend fun getDeleteCandidatesForAccount(accountId: String): List<ReceivedMailEntity>
     @Query("SELECT * FROM received_mails WHERE accountId = :accountId AND processingState = 'PROCESSED'")
     suspend fun getProcessedForAccount(accountId: String): List<ReceivedMailEntity>

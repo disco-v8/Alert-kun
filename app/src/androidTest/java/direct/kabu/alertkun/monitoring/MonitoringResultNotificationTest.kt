@@ -64,8 +64,10 @@ class MonitoringResultNotificationTest {
                         } })
                     val now = System.currentTimeMillis()
                     notifier.onFcmReceived(now, "fixture-receipt")
-                    await { status() != null }
-                    assertTrue(status()!!.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString().contains(context.getString(R.string.monitoring_status_no_issues)))
+                    await { status()?.extras?.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()
+                        ?.contains(context.getString(R.string.monitoring_status_checking)) == true }
+                    assertFalse(status()!!.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+                        .contains(context.getString(R.string.monitoring_status_no_issues)))
                     val result = check.check()
                     assertTrue("Fixture check failed: ${result.error?.javaClass?.simpleName}", result.success)
                     assertEquals(1, handoffs); assertNotNull(result.selectedAlarm)
@@ -95,6 +97,8 @@ class MonitoringResultNotificationTest {
             }
             assertTrue(events.any { it.first == "MONITORING_NOTIFICATION_UPDATE" && it.second["resultState"] == "RULE_MATCH" })
             assertTrue(events.any { it.first == "MONITORING_NOTIFICATION_UPDATE" && it.second["resultState"] == "NORMAL" && it.second["notificationPhase"] == "CHECK_RESULT" })
+            assertTrue(events.any { it.second["resultState"] == "CHECKING" && it.second["notificationPhase"] == "RECEIPT" })
+            assertFalse(events.any { it.second["resultState"] == "NORMAL" && it.second["notificationPhase"] == "RECEIPT" })
             assertFalse(events.toString().contains("fixture@example.invalid"))
             val persisted = observationTestLines(log).drop(logStart).filter { it.contains("trigger=INSTRUMENTATION") }.joinToString("\n")
             assertTrue(persisted.contains("resultState=RULE_MATCH"))

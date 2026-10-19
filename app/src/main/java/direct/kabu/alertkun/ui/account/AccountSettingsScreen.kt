@@ -65,10 +65,9 @@ fun AccountSettingsScreen(onBack: () -> Unit, viewModel: AccountSettingsViewMode
                 AccountPasswordField(editor.password, { setEditor(editor.copy(password = it)) }, passwordVisible, { passwordVisible = !passwordVisible }, editor.hasSavedPassword, !state.busy, state.credentialLoading)
             }
             Row { Checkbox(editor.enabled, { setEditor(editor.copy(enabled = it)) }, enabled = !state.busy); Text(stringResource(R.string.enabled)) }
-            ServerDeletePolicySelector(editor.serverDeletePolicy, !state.busy && editor.protocol in listOf(MailProtocol.POP3, MailProtocol.POP3S)) {
+            ServerDeletePolicySelector(editor.serverDeletePolicy, !state.busy) {
                 setEditor(editor.copy(serverDeletePolicy = it))
             }
-            if (editor.protocol in listOf(MailProtocol.IMAP4, MailProtocol.IMAPS)) Text(stringResource(R.string.server_delete_pop3_only))
             AccountPrimaryActionContent(state, onTest = viewModel::test, onSave = viewModel::save)
             accounts.forEach { account ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

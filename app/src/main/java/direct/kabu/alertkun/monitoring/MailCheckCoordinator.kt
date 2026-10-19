@@ -17,6 +17,7 @@ import kotlinx.coroutines.CancellationException
 interface MonitoringMailStore {
     /** Missing/unsupported lookup retains remote mail. Production resolves account + UIDL from Room. */
     suspend fun findByRemoteId(accountId: String, remoteMessageId: String): ReceivedMail? = null
+    suspend fun knownRemoteIds(accountId: String): Set<String> = emptySet()
     suspend fun receivedMails(): List<ReceivedMail>
     /** false means a database unique constraint rejected an already received remote message. */
     suspend fun saveReceived(mail: ReceivedMail): Boolean
@@ -49,12 +50,31 @@ class MailCheckCoordinator(
             checked++
             evaluated += evaluate(mail, rules)
         }
-        receiver.fetchNewMessages().forEach { remote ->
-            val mail = receivedMail(remote, rules)
-            if (mailStore.saveReceived(mail)) { // Room's unique index is the final duplicate guard.
-                received++
-                checked++
-                evaluated += evaluate(mail, rules)
+        // One account query; successful inserts immediately update the same Set across read retries.
+        val knownByAccount = mutableMapOf<String, MutableSet<String>>()
+        suspend fun known(accountId: String) = knownByAccount.getOrPut(accountId) {
+            try { mailStore.knownRemoteIds(accountId).toMutableSet() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { throw direct.kabu.alertkun.mail.common.LocalMailProcessingException(failure) }
+        }
+        receiver.receive(::known) { remote ->
+            val identities = known(remote.accountId)
+            if (remote.remoteMessageId !in identities) {
+                try {
+                    val mail = receivedMail(remote)
+                    if (mailStore.saveReceived(mail)) {
+                        identities += remote.remoteMessageId
+                        received++
+                        if (mail.processingState == MailProcessingState.RECEIVED) {
+                            checked++
+                            evaluated += evaluate(mail, rules)
+                        }
+                    } else {
+                        // A unique-conflict is the final DB guard, not another evaluation.
+                        identities += remote.remoteMessageId
+                    }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) { throw direct.kabu.alertkun.mail.common.LocalMailProcessingException(failure) }
             }
         }
         val selected = evaluated.mapNotNull { it.candidate }.minWithOrNull(PendingAlarmCandidate.selectionOrder)
@@ -70,19 +90,14 @@ class MailCheckCoordinator(
         throw cancelled
     } catch (error: MailReceiverException) {
         MailCheckResult(false, error = error, failureKind = error.failureKind)
-    } catch (error: Throwable) {
+    } catch (error: Exception) {
         MailCheckResult(false, error = error, failureKind = MonitoringFailureKind.SERVER_UNAVAILABLE)
     }
 
-    private suspend fun receivedMail(remote: RemoteMail, rules: List<AlertRule>): ReceivedMail {
-        var candidate = remote
-        if (ruleEngine.evaluate(candidate.subject, candidate.body, candidate.bodyFetched, rules, from = candidate.from) is RuleEvaluation.BodyRequired) {
-            candidate = candidate.copy(body = receiver.fetchBody(candidate), bodyFetched = true)
-        }
-        return ReceivedMail(UUID.randomUUID().toString(), candidate.accountId, candidate.remoteMessageId, now(), candidate.from,
-            candidate.headers, candidate.subject, candidate.body, candidate.bodyFetched, MailProcessingState.RECEIVED, false, null)
-    }
-
+    private fun receivedMail(remote: RemoteMail): ReceivedMail =
+        ReceivedMail(UUID.randomUUID().toString(), remote.accountId, remote.remoteMessageId, now(), remote.from,
+            remote.headers, remote.subject, remote.body, remote.bodyFetched,
+            if (remote.unsupported) MailProcessingState.UNSUPPORTED else MailProcessingState.RECEIVED, false, null)
     private fun evaluate(mail: ReceivedMail, rules: List<AlertRule>): EvaluatedMail {
         return when (val evaluation = ruleEngine.evaluate(mail.subject, mail.body, mail.bodyFetched, rules, from = mail.from)) {
             is RuleEvaluation.Match -> {
@@ -93,7 +108,7 @@ class MailCheckCoordinator(
                     rule.id, rule.priority, mail.receivedAtEpochMillis, event))
             }
             RuleEvaluation.NoMatch -> EvaluatedMail(mail, null, null)
-            RuleEvaluation.BodyRequired -> throw IllegalStateException("Received mail is missing body required by an enabled rule")
+            RuleEvaluation.BodyRequired -> EvaluatedMail(mail, null, null) // Old RECEIVED: local data only.
         }
     }
 

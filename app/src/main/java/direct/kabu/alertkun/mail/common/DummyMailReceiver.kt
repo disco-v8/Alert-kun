@@ -17,6 +17,18 @@ class DummyMailReceiver private constructor() : MailReceiver {
     }
     suspend fun simulateNextFailure() { mutex.withLock { failNextCheck = true } }
 
+    override suspend fun receive(knownIds: suspend (String) -> Set<String>, consume: suspend (RemoteMail) -> Unit) {
+        val known = knownIds(DUMMY_ACCOUNT_ID)
+        val messages = mutex.withLock {
+            if (failNextCheck) { failNextCheck = false; error("Dummy mail check failure") }
+            queued.values.toList()
+        }
+        for (mail in messages) if (mail.remoteMessageId !in known) {
+            val body = BoundedMailText().apply { append(mail.body.orEmpty()) }.value()
+            consume(mail.copy(body = body, bodyFetched = true))
+        }
+    }
+
     override suspend fun fetchNewMessages(): List<RemoteMail> = mutex.withLock {
         if (failNextCheck) {
             failNextCheck = false

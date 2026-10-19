@@ -1,4 +1,5 @@
 <resources>
+    <string name="received_mail_unsupported">サイズまたは安全なMIME構造の上限により、内容を取得しなかったメールです。</string>
     <string name="continuous_alarm_active">継続警報が作動中です</string>
     <string name="alarm_sound_type">警報音種別</string>
     <string name="alarm_sound_type_alarm">アラーム</string>
@@ -112,7 +113,6 @@
     <string name="server_delete_after_1_month">1ヶ月以上経過</string>
     <string name="server_delete_never">削除しない</string>
     <string name="server_delete_immediately_hint">受信・処理完了後、サーバー上のメールを削除します。</string>
-    <string name="server_delete_pop3_only">サーバー削除はPOP3/POP3Sのみ対応しています。IMAPのメールは削除しません。</string>
     <string name="mydns_settings">MyDNS.JPユーザー情報</string>
     <string name="mydns_save_settings">MyDNS.JP設定を保存</string>
     <string name="mydns_master_id">MyDNS.JP MasterID</string>
@@ -139,11 +139,14 @@
     <string name="monitoring_status_title">アラートくん</string>
     <string name="monitoring_status_date_pattern">yyyy年MM月dd日 HH:mm</string>
     <string name="monitoring_status_no_issues">異常なし</string>
-    <string name="monitoring_status_silent_recommendation">※異常なし通知はサイレント通知にされることをおすすめします</string>
+    <string name="monitoring_status_checking">メール確認中</string>
+    <string name="monitoring_status_check_failed">メール受信確認失敗（%1$d/%2$d）</string>
+    <string name="monitoring_status_consecutive_failures">メール受信が%1$d回連続で失敗しています</string>
+    <string name="monitoring_status_silent_recommendation">※この通知はサイレント通知への設定をおすすめします</string>
     <string name="target_sender">送信元</string>
     <string name="received_mail_detail">メール詳細</string>
     <string name="received_mail_not_found">メールがありません。</string>
-    <string name="received_mail_no_body">ルール判定に本文が不要なため、本文は取得していません。</string>
+    <string name="received_mail_no_body">このメールには保存済みの本文テキストがありません。</string>
     <string name="no_configured_mail_account">メールアカウントが設定されていません</string>
     <string name="monitoring_no_account_start_blocked">メールアカウントが設定されていません。メールアカウントを設定してから監視を開始してください。</string>
     <string name="demo_mode">Demo Mode</string>

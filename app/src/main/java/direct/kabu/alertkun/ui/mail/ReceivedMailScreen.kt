@@ -57,7 +57,9 @@ internal fun ReceivedMailCard(mail: ReceivedMail, onClick: () -> Unit = {}) {
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth().testTag("received_mail_${mail.id}"),
         colors = CardDefaults.cardColors(containerColor = colors.background, contentColor = colors.content)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(mail.subject?.takeIf { it.isNotBlank() } ?: stringResource(R.string.received_mail_no_subject), style = MaterialTheme.typography.titleMedium)
+            Text(if (mail.processingState == direct.kabu.alertkun.model.MailProcessingState.UNSUPPORTED)
+                stringResource(R.string.received_mail_unsupported) else
+                mail.subject?.takeIf { it.isNotBlank() } ?: stringResource(R.string.received_mail_no_subject), style = MaterialTheme.typography.titleMedium)
             Text(stringResource(R.string.received_mail_from, mail.from?.takeIf { it.isNotBlank() } ?: stringResource(R.string.received_mail_unknown_sender)))
             Text(stringResource(R.string.received_mail_timestamp, formatMonitoringTimestamp(mail.receivedAtEpochMillis)))
         }

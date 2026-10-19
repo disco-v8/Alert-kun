@@ -98,6 +98,28 @@ class MailCheckWorker(appContext: Context, parameters: WorkerParameters) : Corou
                 status.recordCheckStarted(startedAt, expectedGeneration)
                 val checkStarted = android.os.SystemClock.elapsedRealtime()
                 observe("CHECK_START", "generation" to expectedGeneration)
+                var completionAttempted = false
+                suspend fun complete(result: MailCheckResult, completedAt: Long) {
+                    // Account only the final poll outcome, never an individual read attempt or account.
+                    completionAttempted = true
+                    val completion = MailCheckCompletionHandler(status).complete(result, completedAt,
+                        settings.consecutiveFailureThreshold, trigger, expectedGeneration)
+                    MonitoringStateStore.update(completion.state)
+                    // Display errors must not turn a completed success into failure or count failure twice.
+                    runCatching {
+                        MonitoringStatusNotifier(applicationContext).onCheckResult(completedAt, completion.display,
+                            expectedGeneration, trigger, id.toString())
+                    }.onFailure {
+                        observe("MONITORING_NOTIFICATION_BLOCKED", "generation" to expectedGeneration,
+                            "notificationId" to MonitoringStatusNotifier.NOTIFICATION_ID,
+                            "channelId" to MonitoringStatusNotifier.CHANNEL_ID, "action" to "SKIP",
+                            "notificationPhase" to "CHECK_RESULT", "resultState" to completion.display.observationState,
+                            "reason" to "NOTIFICATION_ERROR")
+                    }
+                    if (result.success) MonitoringHealthReporter(applicationContext, status).report(completedAt, expectedGeneration)
+                    else if (completion.shouldNotifyFailure) MonitoringFailureNotifier(applicationContext)
+                        .post(settings.consecutiveFailureThreshold, completedAt, result.failureKind)
+                }
                 try {
                     val result = if (selection.mode == direct.kabu.alertkun.mail.common.MailCheckMode.DEMO) {
                         MailCheckCoordinatorFactory.create(applicationContext, selection, null, connectionObservation).check()
@@ -111,25 +133,7 @@ class MailCheckWorker(appContext: Context, parameters: WorkerParameters) : Corou
                         "elapsedMs" to (android.os.SystemClock.elapsedRealtime() - checkStarted), "category" to result.failureKind?.name,
                         "exceptionClass" to result.error?.javaClass?.simpleName)
                     monitoringDebugLog(applicationContext, "mail check end id=$id trigger=$trigger success=${result.success} failure=${result.failureKind} checked=${result.checkedCount} received=${result.receivedCount}")
-                    if (result.success) {
-                        MonitoringStateStore.update(status.recordSuccess(completedAt, trigger, expectedGeneration))
-                        MonitoringHealthReporter(applicationContext, status).report(completedAt, expectedGeneration)
-                        // Display only: failure must not alter success attribution, alarms or the worker result.
-                        runCatching {
-                            MonitoringStatusNotifier(applicationContext).onCheckCompleted(completedAt, result.selectedAlarm,
-                                expectedGeneration, trigger, id.toString())
-                        }.onFailure {
-                            observe("MONITORING_NOTIFICATION_BLOCKED", "generation" to expectedGeneration,
-                                "notificationId" to MonitoringStatusNotifier.NOTIFICATION_ID,
-                                "channelId" to MonitoringStatusNotifier.CHANNEL_ID, "action" to "SKIP",
-                                "notificationPhase" to "CHECK_RESULT", "resultState" to if (result.selectedAlarm == null) "NORMAL" else "RULE_MATCH",
-                                "reason" to "NOTIFICATION_ERROR")
-                        }
-                    } else {
-                        val failure = status.recordFailure(completedAt, settings.consecutiveFailureThreshold, expectedGeneration)
-                        MonitoringStateStore.update(failure.state)
-                        if (failure.shouldNotify) MonitoringFailureNotifier(applicationContext).post(settings.consecutiveFailureThreshold, completedAt, result.failureKind)
-                    }
+                    complete(result, completedAt)
                 } catch (cancelled: CancellationException) {
                     checkResult = "CANCELLED"
                     observe("CHECK_CANCELLED", "generation" to expectedGeneration,
@@ -137,7 +141,9 @@ class MailCheckWorker(appContext: Context, parameters: WorkerParameters) : Corou
                     withContext(NonCancellable) { status.recordHealthInterruption(System.currentTimeMillis()) }
                     monitoringDebugLog(applicationContext, "worker cancelled id=$id stopped=$isStopped")
                     throw cancelled
-                } catch (error: Throwable) {
+                } catch (error: Exception) {
+                    // A persistence/reporting exception after accounting is not another failed MailCheck.
+                    if (completionAttempted) throw error
                     checkResult = "FAILURE"
                     observe("CHECK_FAILURE", "generation" to expectedGeneration,
                         "elapsedMs" to (android.os.SystemClock.elapsedRealtime() - checkStarted),
@@ -145,10 +151,8 @@ class MailCheckWorker(appContext: Context, parameters: WorkerParameters) : Corou
                         "exceptionClass" to error.javaClass.simpleName)
                     monitoringDebugLog(applicationContext, "worker exception id=$id type=${error.javaClass.simpleName}")
                     val completedAt = System.currentTimeMillis()
-                    val failure = status.recordFailure(completedAt, settings.consecutiveFailureThreshold, expectedGeneration)
-                    MonitoringStateStore.update(failure.state)
-                    if (failure.shouldNotify) MonitoringFailureNotifier(applicationContext).post(settings.consecutiveFailureThreshold, completedAt,
-                        direct.kabu.alertkun.mail.common.MailConnectionSettings.classify(error))
+                    complete(MailCheckResult(false, error = error,
+                        failureKind = direct.kabu.alertkun.mail.common.MailConnectionSettings.classify(error)), completedAt)
                 } finally {
                     LocalMailCleanup(SettingsRepository(applicationContext), { policy, cleanupAt ->
                         direct.kabu.alertkun.data.database.AlertKunDatabase.getInstance(applicationContext)

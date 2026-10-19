@@ -58,7 +58,11 @@ class SenderMailNavigationDeviceTest {
                 val senderRule = rules.allRules().single { it.name == ruleName }
                 fixtureRuleId = senderRule.id
                 assertEquals(RuleTarget.SENDER, rules.get(senderRule.id)!!.target)
+                // Persistence can complete before the asynchronous save callback finishes navigation.
+                compose.waitUntil(5_000) { compose.onAllNodesWithTag("rule_add").fetchSemanticsNodes().size == 1 }
+                Espresso.closeSoftKeyboard()
                 Espresso.pressBack()
+                compose.waitUntil(5_000) { compose.onAllNodesWithTag("main_open_mail").fetchSemanticsNodes().size == 1 }
                 compose.onNodeWithTag("main_open_mail").performClick()
                 Pop3TestServer(listOf("sender-mail")).use { server ->
                     server.subjects = mapOf("sender-mail" to "Sender match fixture")
@@ -70,19 +74,19 @@ class SenderMailNavigationDeviceTest {
                     assertTrue(matched.alertTriggered)
                     assertEquals(senderRule.id, matched.matchedRuleId)
                     assertEquals(displayFrom, matched.from)
-                    assertFalse(matched.bodyFetched)
+                    assertTrue(matched.bodyFetched)
                     openNewestMail(matched.id)
                     compose.onNodeWithTag("mail_detail_subject").assertTextEquals("Sender match fixture")
                     compose.onNodeWithTag("mail_detail_from").assertTextEquals(app.getString(R.string.received_mail_from, displayFrom))
                     compose.onNodeWithTag("mail_detail_timestamp").assertTextEquals(app.getString(R.string.received_mail_timestamp,
                         formatMonitoringTimestamp(matched.receivedAtEpochMillis)))
-                    compose.onNodeWithTag("mail_detail_body").assertTextEquals(app.getString(R.string.received_mail_no_body))
+                    compose.onNodeWithTag("mail_detail_body").assertTextEquals(checkNotNull(matched.body))
                     Espresso.pressBack()
                     compose.onNodeWithTag("received_mail_list").assertIsDisplayed()
                     assertEquals(commandsBeforeDisplay, server.commands.size)
                     assertFalse(server.commands.any { it.startsWith("DELE") })
                 }
-                // The existing receiver fetches text only when a body rule requires it.
+                // All new messages contain their bounded body before rule evaluation.
                 Pop3TestServer(listOf("body-mail")).use { server ->
                     server.subjects = mapOf("body-mail" to "Saved multiline body fixture")
                     server.bodies = mapOf("body-mail" to "Saved body fixture\r\nSecond line\r\nThird line")
@@ -121,6 +125,7 @@ class SenderMailNavigationDeviceTest {
 
     private suspend fun receive(repository: MailRepository, account: MailAccount, rule: AlertRule): ReceivedMail {
         val store = object : MonitoringMailStore {
+            override suspend fun knownRemoteIds(accountId: String) = repository.knownRemoteIds(accountId)
             override suspend fun receivedMails() = emptyList<ReceivedMail>()
             override suspend fun saveReceived(mail: ReceivedMail): Boolean { repository.saveReceived(mail); return true }
             override suspend fun finalizeProcessing(id: String, alertTriggered: Boolean, matchedRuleId: String?, backgroundColor: MailBackgroundColor) =

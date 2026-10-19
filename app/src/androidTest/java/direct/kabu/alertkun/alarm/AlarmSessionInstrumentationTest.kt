@@ -8,6 +8,9 @@ import android.media.AudioFocusRequest
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.os.PowerManager
+import android.os.Build
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.os.SystemClock
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.platform.app.InstrumentationRegistry
@@ -65,10 +68,17 @@ class AlarmSessionInstrumentationTest {
             assertTrue(serviceRunning())
             assertNotNull(notification())
             val uid = android.os.Process.myUid()
-            val currentVibration = shell("dumpsys vibrator_manager")
-                .substringAfter("CurrentVibration:").substringBefore("NextVibration:")
-            assertTrue("Synthetic alarm must still own vibration", currentVibration.contains("uid=$uid") ||
-                currentVibration.contains("uid: $uid"))
+            val vibrator = if (Build.VERSION.SDK_INT >= 31)
+                context.getSystemService(VibratorManager::class.java).defaultVibrator
+            else context.getSystemService(Vibrator::class.java)
+            android.util.Log.i("AlarmSessionTest", "api=${Build.VERSION.SDK_INT} hasVibrator=${vibrator.hasVibrator()}")
+            if (vibrator.hasVibrator()) {
+                val currentVibration = if (Build.VERSION.SDK_INT >= 31)
+                    shell("dumpsys vibrator_manager").substringAfter("CurrentVibration:").substringBefore("NextVibration:")
+                else shell("dumpsys vibrator").substringBefore("Previous vibrations:")
+                assertTrue("Synthetic alarm must still own vibration",
+                    Regex("(?i)(?:mUid|uid)\\s*[=:]\\s*$uid\\b").containsMatchIn(currentVibration))
+            }
             shell("input keyevent KEYCODE_WAKEUP")
             controller.stop("main UI")
             controller.stop("main UI")

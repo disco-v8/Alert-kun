@@ -42,13 +42,15 @@ class ReceivedMailScreenTest {
             val accounts = AccountRepository(database.accountDao())
             runBlocking { accounts.upsert(account) }
             val snapshot = runBlocking { accounts.get(account.id) }!!
-            val remote = RemoteMail(snapshot.id, "dovecot-uidl-1", "Header-only test", "sender@example.invalid",
-                headers = mapOf("Message-ID" to "<test@example.invalid>", "Date" to "123"))
+            val remote = RemoteMail(snapshot.id, "dovecot-uidl-1", "Complete mail test", "sender@example.invalid",
+                headers = mapOf("Message-ID" to "<test@example.invalid>", "Date" to "123"),
+                body = "Saved body even without rules", bodyFetched = true)
             val now = System.currentTimeMillis()
             var alarmCalls = 0
             var bodyFetchCalls = 0
             val coordinator = MailCheckCoordinator(
                 mailStore = object : MonitoringMailStore {
+                    override suspend fun knownRemoteIds(accountId: String) = repository.knownRemoteIds(accountId)
                     override suspend fun receivedMails() = repository.receivedMails()
                     override suspend fun saveReceived(mail: ReceivedMail): Boolean {
                         assertEquals(MailProcessingState.RECEIVED, mail.processingState)
@@ -87,8 +89,8 @@ class ReceivedMailScreenTest {
             assertEquals(remote.from, saved.from)
             assertEquals(remote.headers, saved.headers)
             assertEquals(now, saved.receivedAtEpochMillis)
-            assertFalse(saved.bodyFetched)
-            assertNull(saved.body)
+            assertTrue(saved.bodyFetched)
+            assertEquals(remote.body,saved.body)
             assertFalse(saved.alertTriggered)
             assertNull(saved.matchedRuleId)
             assertEquals(0, alarmCalls)

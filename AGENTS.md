@@ -12,7 +12,7 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 
 ## 構造と責務
 
-本番コードはapp/src/main/java/direct/kabu/alertkun、resourcesはapp/src/main/res。単一appモジュール、Kotlin / Compose、minSdk 24 / targetSdk 37。
+本番コードはapp/src/main/java/direct/kabu/alertkun、resourcesはapp/src/main/res。単一appモジュール、Kotlin / Compose、minSdk 26 / targetSdk 37。
 
 - UIへメール通信・Room・Keystore・ルール判定本体・警報制御本体を書かない。ViewModelへ処理本体を集中させない。
 - RuleEngineはAndroid framework、Room、通信、通知から独立した純粋ロジックとする。
@@ -24,12 +24,20 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 - Room、DataStore、Android Keystoreの用途を分離する。Entityとdomainの変換を維持する。
 - POP3はUIDL、IMAPはUIDVALIDITY + UIDを永続IDにする。メッセージ番号を使用しない。
 - UNIQUE(accountId, remoteMessageId)を維持し、ReceivedMailを重複保存しない。
-- UIDL / UIDだけを先に保存しない。必要なローカルデータとRECEIVEDを同じ保存で確定する。
+- 内容削除済み・UNSUPPORTEDを含む既知accountId + remoteMessageIdは取得前にskipする。Account単位の既知Setを一度照会し、保存成功後に即時追加してretryへ引き継ぐ。1通ずつ完全なboundedデータをRECEIVED保存してから全Ruleを1回評価する。途中失敗では候補を破棄し、handoff・batch確定・削除へ進まない。復旧はローカルだけで行う。
+- POP3 / POP3SはUIDLとLISTをheader/bodyより先に取得・検証する。既知へTOP/RETRしない。未知でもraw >16MiBはTOP/RETRせずUNSUPPORTEDとして記録し、後続へ進む。UNSUPPORTEDをpoison mailやretry対象にしない。無効LISTでは推測・terminal保存せずpollを失敗させる。ENVELOPE先行取得・disabletopによる置換は禁止。
+- 通常受信ではUIDL / UIDだけを先に保存せず、必要なローカルデータとRECEIVEDを同じ保存で確定する。仕様上取得しないUNSUPPORTEDだけは、取得不能内容を空値にしてIDとterminal状態を保存する。
 - RECEIVEDとPROCESSEDを混同しない。復旧は保存済みRECEIVEDから再開し、PROCESSEDを再警報しない。
 - Room保存前・Rule評価前にAlarmを出さない。poll handoff成功後、全対象のPROCESSED・matchedRuleId・色・alertTriggeredをRoomの単一batch transactionで確定する。
 - handoff失敗時は次点へfallbackせずRECEIVEDを残す。handoffとRoom確定の間のprocess停止についてexactly-once保証を謳わない。
 - schema変更時はデータを保持するmigration、schema JSON、migration testを更新する。破壊的migrationを勝手に導入しない。
-- 端末内メール削除は既存mailRetentionDays（default 7）とServerDeletePolicyの選択肢を使い、サーバー削除と分離する。実チェック終了時の既存executionMutex内で、開始時刻が属する毎時0分以降の時間帯に1回だけ実行し、試行記録をDataStoreへ先に永続化する。失敗で監視を失敗扱いにせず、同一時間帯に再試行しない。期限到達済みPROCESSEDの内容を消し一覧から除外するが、RECEIVED復旧・UIDL/UID重複防止・サーバー削除再試行・ヘルス件数に必要な最小記録を残す。保存日数や削除対象を暗黙に変更しない。
+- 端末内メール削除は既存mailRetentionDays（default 7）とServerDeletePolicyの選択肢を使い、サーバー削除と分離する。実チェック終了時の既存executionMutex内で、開始時刻が属する毎時0分以降の時間帯に1回だけ実行し、試行記録をDataStoreへ先に永続化する。失敗で監視を失敗扱いにせず、同一時間帯に再試行しない。期限到達済みPROCESSED / UNSUPPORTEDの内容を消し一覧から除外するが、RECEIVED復旧・UIDL/UID重複防止・サーバー削除再試行・ヘルス件数に必要な最小記録を残す。保存日数や削除対象を暗黙に変更しない。
+
+- 本文永続化・Rule入力は1通合計16,384 UTF-8 bytes以下。code point境界で切り、CTE/charset decode後に制限する。multipart/alternativeはplain優先で二重連結せず、添付・filename付きpart・message/rfc822を本文へ混ぜない。HTMLを含め入力サイズ比例のheapを使わない。
+- POP3 raw全量をheap cacheしない。16MiB以下だけ1通単位でprivate tempへstream取得し、次の1通の前・例外・キャンセル時にcleanupする。POP3 / IMAPのraw MIMEは共通Mime4j streaming解析へ渡す。本文bufferが16KiBへ達しても正常rawはEOFまで解析し、後続plain alternativeを確認する。新dependencyは安全上の必要性を証明し互換性probeを通したものだけ採用する。
+- IMAP受信はBODYSTRUCTURE・高レベルcontent APIを使わず、既知除外後にUID付きRFC822.SIZEと64KiB単位のUID BODY.PEEK[] partial FETCHを使う。既知はbody fetch 0、raw上限16MiB。UID・offset・payload長を検証後にparserへ渡す。不一致・サイズ矛盾はprotocol failureとして接続を閉じ、terminal保存しない。size不明で16MiBに達しEOFを証明できなければUNSUPPORTED。添付rawは通信され得るが保存・判定しない。
+- IMAPはpartial取得長を遵守する標準準拠serverを前提とする。巨大literalの宣言によるAngus内部allocation前の防御は保証しない。Angus patch/fork/ByteArray改造・独自IMAP parserは禁止。OutOfMemoryErrorを通常message失敗としてcatchして継続しない。
+- POP3 / IMAPは1Account・1attemptにつき1受信sessionを所有し、Jakarta Messageを外へ出さない。例外・キャンセルでもFolder/Storeを閉じ、削除sessionと共有しない。上限対応を理由にRoom v7を変更しない。
 
 ## Rule・priority・snapshot
 
@@ -39,13 +47,13 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 - 非採用メールも正常pollではPROCESSED。matchedRuleIdと色は各メール自身のRuleから保存し、alertTriggeredは実handoff採用メールだけtrue。
 - backgroundColorはReceivedMailへのsnapshot。表示時に現在のRuleから引き直さない。
 - 採用AlarmEventのsoundType / soundUri / vibrationPattern / alarmModeを他候補と混ぜない。
-- 部分一致・case insensitive・「件名と本文」はORという仕様を無断変更しない。未取得本文の評価制約はarchitectureを参照する。
+- 部分一致・case insensitive・「件名と本文」はORという仕様を無断変更しない。旧RECEIVEDの未取得本文を取り直さず、保存済みデータだけで評価する。
 
 ## 監視
 
 - 通常モードでenabled=trueのメールアカウントが0件なら、監視開始前に拒否し、既存monitoringEnabledを変更しない。既に走ったFCM・Worker・手動確認は通信・Dummy・Coordinatorを実行せず正常skipとし、成功・失敗記録へ流用しない。DummyMailReceiverはユーザーが明示的にONにしたDemo Mode（demo_mode_enabled、default false）だけで使用し、実受信と混在させない。アカウントなしを理由にDemoへ自動切替したり、既存設定・Accountを変換したりしない。
 
-- 監視状態通知6004はFCM受信時の表示に加え、正常check結果で既存pollの採用AlarmEvent内容へ更新する。非一致は「異常なし」へ戻す。表示用selectedAlarmはメモリ内の成功結果だけで渡し、警報の再handoff・別候補選定・Room再評価を行わない。専用channelとサイレント判定を維持し、OFF・古い世代の結果で通知を復活させない。observabilityはNORMAL / RULE_MATCHとRECEIPT / CHECK_RESULT、Work IDだけで結果を追跡し、通知内容・件名・差出人・ルール名をログへ出さない。
+- 監視状態通知6004は直近のMailCheck全体の最終結果を表示する。FCM受信直後はCHECKING（メール確認中）とし、開始・account単位の成功・retry途中・safe skipをNORMALの根拠にしない。共通Worker完了点で既存MonitoringStatusRepositoryの成功reset／失敗加算を1pollにつき1回行い、その結果を表示する。最終SUCCESSは非一致NORMAL（異常なし）、採用警報ありRULE_MATCH。最終FAILUREはFAILUREとし、設定閾値未満ではcount/threshold、到達後は連続失敗countを表示する。failure通知の発報・抑制条件は変更しない。結果表示日時は完了時刻。表示用selectedAlarmはメモリ内の成功結果だけで渡し、再handoff・別候補選定・Room再評価を行わない。専用channelとサイレント判定を維持し、OFF・古い世代の結果で通知を復活させない。observabilityはCHECKING / NORMAL / RULE_MATCH / FAILUREとRECEIPT / CHECK_RESULT、Work IDだけで結果を追跡し、通知内容・件名・差出人・ルール名をログへ出さない。
 
 - FCM受信時の監視状態通知は専用channel alertkun_monitoring_status、固定ID 6004でpost / updateし、OnlyAlertOnceで更新時の再通知を抑える。警報・監視失敗・日次通知とは分離し、監視OFFでcancelする。channelの現在importance / sound / vibrationだけでサイレント相当を判断し、ユーザー設定を上書きしない。通知失敗・権限拒否で既存dispatchを止めず、成功記録・skip・予約を変更しない。永続ログへMONITORING_NOTIFICATION_POST / UPDATE / CANCEL等とFCM照合情報を記録し、既存priorityログを維持する。HIGH配送・deep Doze突破を保証しない。
 
@@ -67,7 +75,7 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 
 ## 警報・preview
 
-- 全警報モードの音声再生は既存mediaPlayback AlarmPlaybackService内で行う。有限回数は直接Service開始、UNTIL_STOPPEDは既存exact alarm → AlarmStartReceiver経路とする。有限回数へexact alarmを追加しない。AlarmModeを再利用し、有限回数はSTART_NOT_STICKYで再開しない。
+- 全警報モードの音声再生は既存mediaPlayback AlarmPlaybackService内で行う。UNTIL_STOPPEDに加え、API37以上の有限ALARMはexact alarm・通知が許可されている場合に既存exact alarm → AlarmStartReceiver経路を使う。それ以外の有限回数は直接Service開始を維持する。起動方針はAlarmDeliveryPolicyへ集約し、active Serviceの置換でexact alarmを重ねない。AlarmModeを再利用し、有限回数はSTART_NOT_STICKYで再開しない。
 - 各有限サイクルはisLooping=false、完了・音源長timeoutでreleaseし、次サイクルを明示的に開始する。エラー時は残りを破棄する。autoLoop metadata対策を維持し、有限回数完了・エラー時にFocus・player・振動・foreground・Serviceを解除する。
 - 警報Serviceを監視へ流用しない。権限・通知・FGS開始失敗時は説明通知と有限回の振動を残し、背景でMediaPlayerを直接再生しない。全モードでFGS開始後にAudio Focusを要求し、拒否時は音を開始しない。
 - 新警報は既存警報を置換しqueueを作らない。Stopはpending開始、timer、残回数、player、振動、通知、Serviceを解除する。
@@ -79,16 +87,18 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 
 ## サーバー削除
 
-- ReceivedMail.serverDeleteResolutionはPENDING / DELETED / ABSENTを区別する。完全なUIDL照合と正常QUIT応答確認後だけ解決状態を保存し、以後の候補から除外する。通信・UIDL・DELE・QUIT失敗や結果不明では候補を維持する。RECEIVED / PROCESSEDを流用せず、UIDLを観測ログへ記録しない。
+- ReceivedMail.serverDeleteResolutionはPENDING / DELETED / ABSENTを区別する。POP3は完全なUIDL照合と正常QUIT応答、IMAPはUIDVALIDITY/UID照合と正常EXPUNGE応答の確認後だけ解決状態を保存し、以後の候補から除外する。通信・UIDL・DELE・QUIT失敗や結果不明では候補を維持する。RECEIVED / PROCESSEDを流用せず、UIDLを観測ログへ記録しない。
 
-- Account単位ServerDeletePolicyの新規・migration・未知値はNEVERとし、明示保存済みpolicyは保持する。POP3 / POP3Sのみ対応し、IMAPへ曖昧に広げない。
+- Account単位ServerDeletePolicyの新規・migration・未知値はNEVERとし、明示保存済みpolicyは保持する。POP3 / POP3S / IMAP4 / IMAPS共通とし、保存済みpolicyを変換しない。
 - ローカル保存、Rule評価、必要なpoll handoff、PROCESSED確定前に削除しない。
-- accountId + UIDLをRoomと照合し、PROCESSEDと有効な初回保存時刻・期限経過を証明できる場合だけ削除する。alertTriggeredを条件にしない。
+- accountId + UIDLをRoomと照合し、PROCESSEDまたはUNSUPPORTEDと有効な初回保存時刻・期限経過を証明できる場合だけ削除する。alertTriggeredを条件にしない。
 - lookup失敗、ID不一致、RECEIVED、不明・未来時刻、protocol状態不明、例外では残す。PROCESSED確定後に既存削除条件でローカル候補UIDLを抽出し、0件なら削除接続を省略する。候補取得失敗を0件扱いせず、候補がある場合もサーバーUIDL照合・全Room lookup・DELE/QUIT制御を省略しない。観測ログには候補件数とskip理由だけを記録し、UIDL・メール内容を出さない。
 - Connection Testでは一切削除しない。READ_ONLY受信・接続テストと専用削除セッションを分離する。
 - 全DELE成功後だけQUITで確定する。途中失敗・キャンセルではQUITを送らない。QUIT後の応答喪失では確定を断定しない。
 - 削除失敗後もPROCESSEDを保ち、次回再試行で再保存・再警報しない。
 - 日数基準は初回保存時刻。1ヶ月はUTCカレンダー加算であり固定30日へ無断変更しない。
+
+- IMAP削除はhandoff・batch確定後の専用READ_WRITE sessionだけで行う。UIDVALIDITY:UIDを照合し、対象\Deletedと通常EXPUNGEの正常応答後だけDELETED。不在またはUIDVALIDITY変更はABSENT、flag/EXPUNGE/通信/応答不明/キャンセルはPENDING。close(false)を維持し、候補0では接続しない。通常EXPUNGEが既存の他\Deletedも消すことは許容済み。
 
 ## 認証・TLS・公開情報
 

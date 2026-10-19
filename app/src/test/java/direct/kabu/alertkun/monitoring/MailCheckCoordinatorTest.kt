@@ -90,7 +90,7 @@ class MailCheckCoordinatorTest {
         assertEquals(MailProcessingState.PROCESSED, stored.single().processingState)
     }
 
-    @Test fun zeroRulesStillSavesHeaderOnlyMailAndFinalizesWithoutAnAlarm() = runBlocking {
+    @Test fun zeroRulesStillSavesCompleteMailAndFinalizesWithoutAnAlarm() = runBlocking {
         val stored = mutableListOf<ReceivedMail>()
         val log = mutableListOf<String>()
         val remote = RemoteMail("saved-account-id", "dovecot-uidl", "Subject", "sender@example.invalid",
@@ -110,7 +110,7 @@ class MailCheckCoordinatorTest {
         assertEquals(MailProcessingState.PROCESSED, saved.processingState)
         assertFalse(saved.alertTriggered)
         assertEquals(null, saved.matchedRuleId)
-        assertFalse(saved.bodyFetched)
+        assertTrue(saved.bodyFetched)
         assertEquals(null, saved.body)
         assertEquals(0, log.count { it.startsWith("alarm:") })
     }
@@ -146,7 +146,7 @@ class MailCheckCoordinatorTest {
         assertEquals(2, stored.count { it.processingState == MailProcessingState.PROCESSED })
     }
 
-    @Test fun duplicateDoesNotAlarmAndBodyRequiredFetchesBeforeSaving() = runBlocking {
+    @Test fun duplicateDoesNotAlarmAndCompleteBodyIsSavedBeforeEvaluation() = runBlocking {
         val log = mutableListOf<String>()
         val stored = mutableListOf<ReceivedMail>()
         val bodyRule = rule(target = RuleTarget.BODY)
@@ -166,7 +166,7 @@ class MailCheckCoordinatorTest {
             override suspend fun finalizeProcessing(id: String, alertTriggered: Boolean, matchedRuleId: String?, backgroundColor: MailBackgroundColor) { val i = stored.indexOfFirst { it.id == id }; stored[i] = stored[i].copy(processingState = MailProcessingState.PROCESSED, alertTriggered = alertTriggered, matchedRuleId = matchedRuleId, backgroundColor = backgroundColor); log += "finalize:$id" }
         },
         ruleSource = object : MonitoringRuleSource { override suspend fun allRules() = rules },
-        receiver = object : MailReceiver { override suspend fun fetchNewMessages() = remote.map { it.copy(body = null, bodyFetched = false) }; override suspend fun fetchBody(remoteMail: RemoteMail) = remote.first { it.remoteMessageId == remoteMail.remoteMessageId }.body },
+        receiver = object : MailReceiver { override suspend fun fetchNewMessages() = remote; override suspend fun fetchBody(remoteMail: RemoteMail) = remote.first { it.remoteMessageId == remoteMail.remoteMessageId }.body },
         alarmSink = object : MonitoringAlarmSink { override fun start(event: AlarmEvent) { log += "alarm:${event.mailId}" } },
         now = { 1L },
     )

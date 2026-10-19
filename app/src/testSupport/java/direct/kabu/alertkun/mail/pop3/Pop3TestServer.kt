@@ -18,7 +18,14 @@ class Pop3TestServer(uidls: List<String> = listOf("test-uid-1"), socketFactory: 
     @Volatile var disconnectOnDeleteNumber: Int? = null
     @Volatile var duplicateUidl = false
     @Volatile var incompleteUidl = false
+    @Volatile var rejectUidl = false
+    @Volatile var missingUidlNumber: Int? = null
     @Volatile var loseQuitResponse = false
+    @Volatile var disconnectOnRetrNumber: Int? = null
+    @Volatile var rejectList = false
+    @Volatile var malformedList = false
+    var reportedSizes: Map<String, Long> = emptyMap()
+    var rawFiles: Map<String, java.io.File> = emptyMap()
     var subjects: Map<String, String> = emptyMap()
     var fromHeaders: Map<String, String> = emptyMap()
     var bodies: Map<String, String> = emptyMap()
@@ -44,6 +51,7 @@ class Pop3TestServer(uidls: List<String> = listOf("test-uid-1"), socketFactory: 
         val deleted = mutableSetOf<Int>()
         fun reply(line: String) { writer.write(line + "\r\n"); writer.flush() }
         fun message(number: Int) = "From: ${fromHeaders[snapshot[number - 1]] ?: "fixture@example.invalid"}\r\nSubject: ${subjects[snapshot[number - 1]] ?: "ALERT test"}\r\nDate: Mon, 1 Jan 2001 00:00:00 +0000\r\nMessage-ID: <${snapshot[number - 1]}@example.invalid>\r\nContent-Type: text/plain; charset=us-ascii\r\n\r\n${bodies[snapshot[number - 1]] ?: "Disposable test message"}\r\n"
+        fun size(number: Int) = reportedSizes[snapshot[number - 1]] ?: rawFiles[snapshot[number - 1]]?.length() ?: message(number).length.toLong()
         reply("+OK dedicated test server")
         while (true) {
             val line = reader.readLine() ?: return // Pending DELE is discarded on abnormal close.
@@ -53,16 +61,40 @@ class Pop3TestServer(uidls: List<String> = listOf("test-uid-1"), socketFactory: 
             when (verb) {
                 "CAPA" -> { reply("+OK"); reply("UIDL"); reply("TOP"); reply(".") }
                 "USER", "PASS", "NOOP" -> reply("+OK")
-                "STAT" -> reply("+OK ${snapshot.size} ${snapshot.indices.sumOf { message(it + 1).length }}")
+                "STAT" -> reply("+OK ${snapshot.size} ${snapshot.indices.sumOf { size(it + 1) }}")
                 "LIST" -> {
-                    if (number != null) reply("+OK $number ${message(number).length}")
-                    else { reply("+OK"); snapshot.indices.forEach { reply("${it + 1} ${message(it + 1).length}") }; reply(".") }
+                    if (rejectList) { reply("-ERR unavailable"); continue }
+                    if (number != null) reply("+OK $number ${size(number)}")
+                    else {
+                        reply("+OK")
+                        snapshot.indices.forEach { index ->
+                            reply(if (malformedList) "invalid" else "${index + 1} ${size(index + 1)}")
+                        }
+                        reply(".")
+                    }
                 }
                 "UIDL" -> {
+                    if (rejectUidl || number != null && number == missingUidlNumber) {
+                        reply("-ERR UIDL unavailable")
+                        continue
+                    }
                     if (number != null) reply("+OK $number ${snapshot[number - 1]}")
-                    else { reply("+OK"); if (incompleteUidl) return; snapshot.forEachIndexed { index, uidl -> reply("${index + 1} ${if (duplicateUidl) snapshot.first() else uidl}") }; reply(".") }
+                    else {
+                        reply("+OK"); if (incompleteUidl) return
+                        snapshot.forEachIndexed { index, uidl ->
+                            if (index + 1 != missingUidlNumber) reply("${index + 1} ${if (duplicateUidl) snapshot.first() else uidl}")
+                        }
+                        reply(".")
+                    }
                 }
-                "TOP", "RETR" -> { reply("+OK"); writer.write(message(checkNotNull(number))); writer.write(".\r\n"); writer.flush() }
+                "TOP", "RETR" -> {
+                    if (verb == "RETR" && number == disconnectOnRetrNumber) return
+                    reply("+OK")
+                    val fixture=rawFiles[snapshot[checkNotNull(number)-1]]
+                    if(fixture==null) writer.write(message(number))
+                    else fixture.inputStream().use { it.copyTo(socket.getOutputStream(),8192) }
+                    writer.write(".\r\n");writer.flush()
+                }
                 "DELE" -> {
                     if (number == disconnectOnDeleteNumber) return
                     if (number == rejectDeleteNumber || number == null || number !in 1..snapshot.size) reply("-ERR deletion rejected")

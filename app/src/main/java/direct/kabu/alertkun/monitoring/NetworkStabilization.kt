@@ -115,6 +115,7 @@ internal class NetworkStabilization(
         const val MAX_ATTEMPTS = 3
         fun isTransientNetworkRetryCandidate(error: Throwable): Boolean {
             val chain = generateSequence(error) { it.cause?.takeUnless { cause -> cause === it } }.take(16).toList()
+            if (chain.any { it is direct.kabu.alertkun.mail.common.LocalMailProcessingException }) return false
             val kind = chain.filterIsInstance<MailReceiverException>().firstOrNull()?.failureKind
             if (kind != null && kind !in setOf(MonitoringFailureKind.DNS_FAILURE, MonitoringFailureKind.CONNECTION_TIMEOUT,
                     MonitoringFailureKind.CONNECTION_REFUSED, MonitoringFailureKind.SERVER_UNAVAILABLE)) return false
@@ -132,7 +133,11 @@ internal class NetworkStabilizingMailReceiver(
     private val network: NetworkStabilization,
     private val hasDeletionConnection: Boolean = true,
 ) : MailReceiver {
+    override suspend fun receive(knownIds: suspend (String) -> Set<String>, consume: suspend (RemoteMail) -> Unit) =
+        network.read { delegate.receive(knownIds, consume) }
     override suspend fun fetchNewMessages(): List<RemoteMail> = network.read { delegate.fetchNewMessages() }
+    override suspend fun fetchNewMessages(isKnown: suspend (String, String) -> Boolean): List<RemoteMail> =
+        network.read { delegate.fetchNewMessages(isKnown) }
     override suspend fun fetchBody(remoteMail: RemoteMail): String? = network.read { delegate.fetchBody(remoteMail) }
     override suspend fun deleteProcessedMessages(lookup: suspend (String, String) -> ReceivedMail?, now: Long) {
         if (hasDeletionConnection) network.awaitNetwork()

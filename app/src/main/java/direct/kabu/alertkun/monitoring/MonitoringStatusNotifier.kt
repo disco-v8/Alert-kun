@@ -23,7 +23,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 
-/** Receipt and latest completed-check display; never another alarm delivery. */
+/** Neutral receipt indication and final poll outcome; never another alarm delivery. */
 internal class MonitoringStatusNotifier(
     private val context: Context,
     private val readState: () -> Pair<Boolean, Long> = {
@@ -40,18 +40,22 @@ internal class MonitoringStatusNotifier(
     private val manager = context.getSystemService(NotificationManager::class.java)
 
     fun onFcmReceived(receivedAt: Long, messageIdHash: String?) {
-        post(receivedAt, messageIdHash, null, "NORMAL", null, "FCM", null)
+        post(receivedAt, messageIdHash, MonitoringStatusResult.Checking, null, "FCM", null)
     }
 
     /** Display a completed check only. Does not call AlarmController or record monitoring success. */
     fun onCheckCompleted(completedAt: Long, selectedAlarm: AlarmEvent?,
         expectedGeneration: Long, trigger: MailCheckTrigger, workId: String) {
-        post(completedAt, null, selectedAlarm, if (selectedAlarm == null) "NORMAL" else "RULE_MATCH",
-            expectedGeneration, trigger.name, workId)
+        onCheckResult(completedAt, MonitoringStatusResult.Success(selectedAlarm), expectedGeneration, trigger, workId)
+    }
+
+    fun onCheckResult(completedAt: Long, result: MonitoringStatusResult,
+        expectedGeneration: Long, trigger: MailCheckTrigger, workId: String) {
+        post(completedAt, null, result, expectedGeneration, trigger.name, workId)
     }
 
     @android.annotation.SuppressLint("MissingPermission") // Check before notify; catch permission revocation too.
-    private fun post(timestamp: Long, messageIdHash: String?, selectedAlarm: AlarmEvent?, resultState: String,
+    private fun post(timestamp: Long, messageIdHash: String?, result: MonitoringStatusResult,
         expectedGeneration: Long?, trigger: String, workId: String?) {
         // Serialize only notification post/cancel. Never acquire executionMutex or change monitoring state.
         synchronized(notificationLock) {
@@ -59,7 +63,7 @@ internal class MonitoringStatusNotifier(
             fun observe(name: String, action: String, reason: String? = null,
                 importance: Int? = null, silent: Boolean? = null, sound: Boolean? = null, vibration: Boolean? = null) {
                 event(name, generation, action, messageIdHash, reason, importance, silent, sound, vibration,
-                    trigger, resultState, workId, if (expectedGeneration == null) "RECEIPT" else "CHECK_RESULT")
+                    trigger, result.observationState, workId, if (expectedGeneration == null) "RECEIPT" else "CHECK_RESULT")
             }
             try {
                 val state = readState()
@@ -94,7 +98,7 @@ internal class MonitoringStatusNotifier(
                     return
                 }
                 val update = manager.activeNotifications.any { it.id == NOTIFICATION_ID && it.tag == null }
-                manager.notify(NOTIFICATION_ID, notification(timestamp, silent, selectedAlarm))
+                manager.notify(NOTIFICATION_ID, notification(timestamp, silent, result))
                 observe(if (update) "MONITORING_NOTIFICATION_UPDATE" else "MONITORING_NOTIFICATION_POST",
                     if (update) "UPDATE" else "POST", importance = importance, silent = silent,
                     sound = if (channel == null) null else sound, vibration = vibration)
@@ -114,6 +118,11 @@ internal class MonitoringStatusNotifier(
     }
 
     internal fun notification(receivedAt: Long, silent: Boolean, selectedAlarm: AlarmEvent? = null): Notification {
+        return notification(receivedAt, silent, MonitoringStatusResult.Success(selectedAlarm))
+    }
+
+    internal fun notification(receivedAt: Long, silent: Boolean, result: MonitoringStatusResult): Notification {
+        val selectedAlarm = (result as? MonitoringStatusResult.Success)?.selectedAlarm
         val locale = context.resources.configuration.locales[0]
         val timestamp = MonitoringStatusNotificationPolicy.timestamp(receivedAt,
             context.getString(R.string.monitoring_status_date_pattern), locale)
@@ -124,7 +133,13 @@ internal class MonitoringStatusNotifier(
         val title = selectedAlarm?.let { context.getString(R.string.alarm_notification_title, it.ruleName) }
             ?: context.getString(R.string.monitoring_status_title)
         val message = buildString {
-            if (selectedAlarm == null) {
+            if (result is MonitoringStatusResult.Checking) {
+                append(timestamp).append('\n').append(context.getString(R.string.monitoring_status_checking))
+            } else if (result is MonitoringStatusResult.Failure) {
+                append(timestamp).append('\n').append(if (result.count < result.threshold)
+                    context.getString(R.string.monitoring_status_check_failed, result.count, result.threshold)
+                else context.getString(R.string.monitoring_status_consecutive_failures, result.count))
+            } else if (selectedAlarm == null) {
                 append(timestamp).append('\n').append(context.getString(R.string.monitoring_status_no_issues))
             } else {
                 val from = selectedAlarm.mailFrom?.takeIf(String::isNotBlank) ?: context.getString(R.string.alarm_unknown_sender)
@@ -148,7 +163,8 @@ internal class MonitoringStatusNotifier(
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(if (selectedAlarm == null) R.drawable.ic_notification_normal else R.drawable.ic_notification_rule_match)
+            .setSmallIcon(if (selectedAlarm == null && result !is MonitoringStatusResult.Failure)
+                R.drawable.ic_notification_normal else R.drawable.ic_notification_rule_match)
             .setContentTitle(title)
             .setContentText(if (selectedAlarm == null) message else subject)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))

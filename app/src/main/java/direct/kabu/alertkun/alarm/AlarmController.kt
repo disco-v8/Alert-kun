@@ -96,7 +96,8 @@ class AlarmController private constructor(context: Context) {
         lifecycle.stop()
         mutableSession.value = null
         stopOutputsLocked()
-        var delivery = AlarmDeliveryPolicy.delivery(event.alarmMode, canScheduleExactAlarms(), canPostNotifications())
+        var delivery = AlarmDeliveryPolicy.delivery(event.alarmMode, canScheduleExactAlarms(), canPostNotifications(),
+            event.soundType, Build.VERSION.SDK_INT)
         if (delivery != AlarmDelivery.FALLBACK_NOTIFICATION && runningService != null) {
             if (runningContinuous == (event.alarmMode == AlarmMode.UNTIL_STOPPED)) {
                 // Already foreground: replace in-place, avoiding repeated exact-alarm throttling.
@@ -111,6 +112,7 @@ class AlarmController private constructor(context: Context) {
             try {
                 alarms.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP,
                     SystemClock.elapsedRealtime() + 100L, exactPendingIntent(token))
+                observe("ALARM_EXACT_SCHEDULED", token, event)
             } catch (_: SecurityException) { delivery = AlarmDelivery.FALLBACK_NOTIFICATION }
         }
         val posted = postNotification(event, token, delivery == AlarmDelivery.FALLBACK_NOTIFICATION,
@@ -128,8 +130,10 @@ class AlarmController private constructor(context: Context) {
     @Synchronized
     internal fun startFromExactAlarm(token: String) {
         val alarm = pending.load()?.takeIf { it.token == token } ?: return
-        if (alarm.event.alarmMode != AlarmMode.UNTIL_STOPPED) return
-        debugLog("UNTIL_STOPPED service start")
+        if (activeToken == token || !AlarmDeliveryPolicy.acceptsExactEntry(
+                alarm.event.alarmMode, alarm.event.soundType, Build.VERSION.SDK_INT)) return
+        observe("ALARM_EXACT_DELIVERED", token, alarm.event)
+        debugLog("exact alarm service start mode=${alarm.event.alarmMode}")
         if (!canPostNotifications()) { fallback(alarm); return }
         startPlaybackService(alarm)
     }

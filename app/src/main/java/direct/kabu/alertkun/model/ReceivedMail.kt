@@ -27,4 +27,6 @@ data class ReceivedMail(
 enum class MailProcessingState {
     RECEIVED,
     PROCESSED,
+    /** Terminal, deliberately not evaluated; identity is retained for deduplication/deletion. */
+    UNSUPPORTED,
 }

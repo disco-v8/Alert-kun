@@ -10,9 +10,17 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class MailTextExtractorTest {
+    private fun extract(message: MimeMessage): String? {
+        // These are tiny synthetic fixtures; production POP3 streams raw into a private file.
+        val raw = java.io.ByteArrayOutputStream()
+        message.writeTo(raw)
+        val result = direct.kabu.alertkun.mail.common.StreamingMailMime.parse(raw.toByteArray().inputStream())
+        org.junit.Assert.assertFalse(result.unsupported)
+        return result.body.takeIf { it.isNotEmpty() }
+    }
     @Test fun extractsPlainText() {
         val message = MimeMessage(Session.getInstance(Properties())).apply { setText("plain body", "UTF-8") }
-        assertEquals("plain body", MailTextExtractor.extract(message))
+        assertEquals("plain body", extract(message))
     }
 
     @Test fun prefersPlainTextFromAlternative() {
@@ -21,7 +29,7 @@ class MailTextExtractorTest {
             addBodyPart(MimeBodyPart().apply { setContent("<b>html</b>", "text/html; charset=UTF-8") })
         }
         val message = MimeMessage(Session.getInstance(Properties())).apply { setContent(multipart); saveChanges() }
-        assertEquals("plain", MailTextExtractor.extract(message))
+        assertEquals("plain", extract(message))
     }
 
     @Test fun ignoresAttachment() {
@@ -29,6 +37,6 @@ class MailTextExtractorTest {
             addBodyPart(MimeBodyPart().apply { disposition = jakarta.mail.Part.ATTACHMENT; fileName = "secret.txt"; setText("attachment", "UTF-8") })
         }
         val message = MimeMessage(Session.getInstance(Properties())).apply { setContent(multipart); saveChanges() }
-        assertNull(MailTextExtractor.extract(message))
+        assertNull(extract(message))
     }
 }

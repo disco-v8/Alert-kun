@@ -48,6 +48,9 @@ internal fun ReceivedMailDetailContent(mailId: String?, state: ReceivedMailUiSta
                 state.loadFailed -> Text(stringResource(R.string.received_mail_load_failed), Modifier.testTag("mail_detail_error"))
                 mail == null -> Text(stringResource(R.string.received_mail_not_found), Modifier.testTag("mail_detail_missing"))
                 else -> {
+                    if (mail.processingState == direct.kabu.alertkun.model.MailProcessingState.UNSUPPORTED) {
+                        Text(stringResource(R.string.received_mail_unsupported), Modifier.testTag("mail_detail_unsupported"))
+                    }
                     Text(mail.subject?.takeIf { it.isNotBlank() } ?: stringResource(R.string.received_mail_no_subject),
                         Modifier.testTag("mail_detail_subject"), style = MaterialTheme.typography.titleLarge)
                     Text(stringResource(R.string.received_mail_from,

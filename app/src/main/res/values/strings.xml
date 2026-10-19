@@ -1,4 +1,5 @@
 <resources>
+    <string name="received_mail_unsupported">Content was not retrieved because the message exceeds the size or safe MIME limits.</string>
     <string name="continuous_alarm_active">Alarm is sounding</string>
     <string name="alarm_sound_type">Sound type</string>
     <string name="alarm_sound_type_alarm">Alarm</string>
@@ -119,7 +120,6 @@
     <string name="server_delete_after_1_month">After 1 month</string>
     <string name="server_delete_never">Never</string>
     <string name="server_delete_immediately_hint">Mail is deleted from the server after receiving and processing successfully.</string>
-    <string name="server_delete_pop3_only">Server deletion is supported for POP3/POP3S only. IMAP mail is retained.</string>
     <string name="mydns_settings">MyDNS.JP user information</string>
     <string name="mydns_save_settings">Save MyDNS.JP settings</string>
     <string name="mydns_master_id">MyDNS.JP MasterID</string>
@@ -146,11 +146,14 @@
     <string name="monitoring_status_title">Alert-kun</string>
     <string name="monitoring_status_date_pattern">MMM d, yyyy HH:mm</string>
     <string name="monitoring_status_no_issues">No issues</string>
+    <string name="monitoring_status_checking">Checking mail</string>
+    <string name="monitoring_status_check_failed">Mail check failed (%1$d/%2$d)</string>
+    <string name="monitoring_status_consecutive_failures">Consecutive failed mail checks: %1$d</string>
     <string name="monitoring_status_silent_recommendation">We recommend setting these notifications to Silent in Android notification settings.</string>
     <string name="target_sender">Sender</string>
     <string name="received_mail_detail">Mail details</string>
     <string name="received_mail_not_found">Mail not found.</string>
-    <string name="received_mail_no_body">The body was not retrieved because it was not needed for rule evaluation.</string>
+    <string name="received_mail_no_body">No body text is saved for this message.</string>
     <string name="no_configured_mail_account">No mail account is configured</string>
     <string name="monitoring_no_account_start_blocked">No mail account is configured. Configure a mail account before starting monitoring.</string>
     <string name="demo_mode">Demo Mode</string>

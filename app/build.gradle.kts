@@ -19,7 +19,7 @@ android {
 
     defaultConfig {
         applicationId = "direct.kabu.alertkun"
-        minSdk = 24
+        minSdk = 26
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
@@ -46,8 +46,11 @@ android {
     // Dedicated TCP mail-server fixtures shared by local and device tests, never shipped.
     sourceSets.getByName("test").kotlin.directories += "src/testSupport/java"
     sourceSets.getByName("androidTest").kotlin.directories += "src/testSupport/java"
+    sourceSets.getByName("test").java.srcDir("src/testSupport/java")
+    sourceSets.getByName("androidTest").java.srcDir("src/testSupport/java")
     packaging {
         resources {
+            merges += setOf("META-INF/LICENSE", "META-INF/NOTICE")
             excludes += setOf(
                 "META-INF/NOTICE.md",
                 "META-INF/LICENSE.md"
@@ -73,6 +76,7 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.angus.mail)
+    implementation(libs.mime4j.core)
     implementation(libs.kotlinx.serialization.json)
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.junit)

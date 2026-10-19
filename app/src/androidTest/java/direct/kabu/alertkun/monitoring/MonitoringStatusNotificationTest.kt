@@ -50,9 +50,12 @@ class MonitoringStatusNotificationTest {
         val notifier = MonitoringStatusNotifier(context, { true to 123L }, observation = { event, _ -> events.add(event) })
         val others = manager.activeNotifications.filter { it.id != MonitoringStatusNotifier.NOTIFICATION_ID }.map { it.id }.toSet()
         try {
+            // Keep this fixture independent of the preceding test's package notification rate.
+            android.os.SystemClock.sleep(1_000)
             val now = System.currentTimeMillis()
             notifier.onFcmReceived(now, "test-first")
             waitUntil { manager.activeNotifications.any { it.id == MonitoringStatusNotifier.NOTIFICATION_ID } }
+            android.os.SystemClock.sleep(250)
             notifier.onFcmReceived(now + 60_000, "test-second")
             waitUntil { manager.activeNotifications.any { it.id == MonitoringStatusNotifier.NOTIFICATION_ID && it.notification.`when` == now + 60_000 } }
             assertEquals(1, manager.activeNotifications.count { it.id == MonitoringStatusNotifier.NOTIFICATION_ID })
@@ -104,6 +107,88 @@ class MonitoringStatusNotificationTest {
         notifier.onCheckCompleted(System.currentTimeMillis(), null, 123L, MailCheckTrigger.FCM, "old-work")
         assertTrue(events.any { it.second["reason"] == "GENERATION_MISMATCH" })
         assertFalse(events.any { it.first in listOf("MONITORING_NOTIFICATION_POST", "MONITORING_NOTIFICATION_UPDATE") })
+    }
+
+    @Test fun checkingAndFailureAreLocalizedAndNeverClaimNormal() {
+        for (locale in listOf(Locale.JAPANESE, Locale.ENGLISH)) {
+            val localized = context.createConfigurationContext(Configuration(context.resources.configuration).apply { setLocale(locale) })
+            val notifier = MonitoringStatusNotifier(localized)
+            val at = 123_456L
+            val states = listOf(MonitoringStatusResult.Checking,
+                MonitoringStatusResult.Failure(1, 3), MonitoringStatusResult.Failure(2, 3),
+                MonitoringStatusResult.Failure(3, 3), MonitoringStatusResult.Failure(4, 3),
+                MonitoringStatusResult.Failure(1, 1), MonitoringStatusResult.Failure(1, 99))
+            for (state in states) {
+                val notification = notifier.notification(at, true, state)
+                val text = notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+                assertFalse(text.contains(localized.getString(R.string.monitoring_status_no_issues)))
+                val expected = when (state) {
+                    MonitoringStatusResult.Checking -> localized.getString(R.string.monitoring_status_checking)
+                    is MonitoringStatusResult.Failure -> if (state.count < state.threshold)
+                        localized.getString(R.string.monitoring_status_check_failed, state.count, state.threshold)
+                    else localized.getString(R.string.monitoring_status_consecutive_failures, state.count)
+                    else -> error("Unexpected fixture")
+                }
+                assertTrue(text.contains(expected))
+                assertEquals(at, notification.`when`)
+                assertEquals(MonitoringStatusNotifier.CHANNEL_ID, notification.channelId)
+                assertTrue(notification.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
+                assertFalse(text.contains(localized.getString(R.string.monitoring_status_silent_recommendation)))
+                val audible = notifier.notification(at, false, state).extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+                assertTrue(audible.contains(localized.getString(R.string.monitoring_status_silent_recommendation)))
+            }
+        }
+        assertNotEquals("alertkun_monitoring_failure", MonitoringStatusNotifier.CHANNEL_ID)
+        assertNotEquals(6_002, MonitoringStatusNotifier.NOTIFICATION_ID)
+        assertNotEquals(direct.kabu.alertkun.alarm.AlarmController.NOTIFICATION_ID, MonitoringStatusNotifier.NOTIFICATION_ID)
+    }
+
+    @Test fun checkingFailureAndRecoveryReplaceSameIdUsingFinalCompletionTime() {
+        val events = mutableListOf<Pair<String, Map<String, Any?>>>()
+        val notifier = MonitoringStatusNotifier(context, { true to 123L }, observation = { event, values -> events += event to values })
+        val at = System.currentTimeMillis()
+        try {
+            // Android limits package notification updates per second. Real polls are minutes apart;
+            // let preceding integration-test posts expire and pace this synthetic burst below 5/s.
+            android.os.SystemClock.sleep(1_000)
+            notifier.onFcmReceived(at, "fixture-receipt")
+            waitUntil { manager.activeNotifications.any { it.id == MonitoringStatusNotifier.NOTIFICATION_ID && it.notification.`when` == at } }
+            assertTrue(manager.activeNotifications.single { it.id == MonitoringStatusNotifier.NOTIFICATION_ID }.notification
+                .extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString().contains(context.getString(R.string.monitoring_status_checking)))
+            for (count in 1..4) {
+                android.os.SystemClock.sleep(250)
+                notifier.onCheckResult(at + count, MonitoringStatusResult.Failure(count, 3), 123L,
+                    MailCheckTrigger.SCHEDULED_WORK, "fixture-work")
+                waitUntil { manager.activeNotifications.any { it.id == MonitoringStatusNotifier.NOTIFICATION_ID && it.notification.`when` == at + count } }
+                val active = manager.activeNotifications.filter { it.id == MonitoringStatusNotifier.NOTIFICATION_ID }
+                assertEquals(1, active.size)
+                assertFalse(active.single().notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+                    .contains(context.getString(R.string.monitoring_status_no_issues)))
+            }
+            assertFalse(events.any { it.second["resultState"] == "NORMAL" })
+            assertTrue(events.any { it.second["resultState"] == "CHECKING" && it.second["notificationPhase"] == "RECEIPT" })
+            assertTrue(events.any { it.second["resultState"] == "FAILURE" && it.second["notificationPhase"] == "CHECK_RESULT" })
+            android.os.SystemClock.sleep(250)
+            notifier.onCheckResult(at + 5, MonitoringStatusResult.Success(null), 123L, MailCheckTrigger.MANUAL, "fixture-recovery")
+            waitUntil { manager.activeNotifications.any { it.id == MonitoringStatusNotifier.NOTIFICATION_ID && it.notification.`when` == at + 5 } }
+            val recovered = manager.activeNotifications.single { it.id == MonitoringStatusNotifier.NOTIFICATION_ID }.notification
+            assertTrue(recovered.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+                .contains(context.getString(R.string.monitoring_status_no_issues)))
+        } finally {
+            notifier.cancel(123L)
+            waitUntil { manager.activeNotifications.none { it.id == MonitoringStatusNotifier.NOTIFICATION_ID } }
+        }
+    }
+
+    @Test fun failureResultsRespectOffAndGenerationGuards() {
+        for (state in listOf(false to 123L, true to 124L)) {
+            val events = mutableListOf<Pair<String, Map<String, Any?>>>()
+            val notifier = MonitoringStatusNotifier(context, { state }, observation = { event, fields -> events += event to fields })
+            notifier.onCheckResult(System.currentTimeMillis(), MonitoringStatusResult.Failure(3, 3), 123L,
+                MailCheckTrigger.FCM, "fixture-work")
+            assertTrue(events.any { it.second["reason"] == if (state.first) "GENERATION_MISMATCH" else "MONITORING_OFF" })
+            assertFalse(events.any { it.first in listOf("MONITORING_NOTIFICATION_POST", "MONITORING_NOTIFICATION_UPDATE") })
+        }
     }
 
     private fun waitUntil(condition: () -> Boolean) {

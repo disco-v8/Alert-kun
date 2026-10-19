@@ -6,77 +6,65 @@ import jakarta.mail.Folder
 import jakarta.mail.Message
 import jakarta.mail.Session
 import jakarta.mail.Store
-import jakarta.mail.internet.InternetAddress
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** Shared Jakarta Mail connection handling. Standard TLS hostname and trust-store validation remain enabled. */
+/** Connection ownership never crosses a receiving callback/session boundary. */
 abstract class JakartaMailReceiver(
     protected val account: MailAccount,
     private val password: String,
     private val observation: ObservationSink = { _, _ -> },
 ) : MailReceiver {
+    protected abstract suspend fun receiveMessages(folder: Folder, knownIds: Set<String>, consume: suspend (RemoteMail) -> Unit)
     protected abstract fun remoteMessageId(folder: Folder, message: Message): String
 
-    override suspend fun fetchNewMessages(): List<RemoteMail> = withContext(Dispatchers.IO) {
-        connectAndUse("READ_HEADERS") { folder ->
-            folder.messages.map { message ->
-                RemoteMail(
-                    accountId = account.id,
-                    remoteMessageId = remoteMessageId(folder, message),
-                    subject = message.subject,
-                    from = message.from?.joinToString(", ") { address ->
-                        if (address is InternetAddress) address.toUnicodeString() else address.toString()
-                    },
-                    headers = buildMap {
-                        message.getHeader("Message-ID")?.firstOrNull()?.let { put("Message-ID", it) }
-                        message.sentDate?.time?.let { put("Date", it.toString()) }
-                    },
-                )
-            }
+    override suspend fun receive(knownIds: suspend (String) -> Set<String>, consume: suspend (RemoteMail) -> Unit) =
+        withContext(Dispatchers.IO) {
+            val known = knownIds(account.id)
+            connectAndUse("RECEIVE") { folder -> receiveMessages(folder, known, consume) }
         }
-    }
 
-    override suspend fun fetchBody(remoteMail: RemoteMail): String? = withContext(Dispatchers.IO) {
-        require(remoteMail.accountId == account.id)
-        connectAndUse("READ_BODY") { folder ->
-            folder.messages.firstOrNull { remoteMessageId(folder, it) == remoteMail.remoteMessageId }
-                ?.let(MailTextExtractor::extract)
-        }
+    // Collection convenience for existing local connection probes; production uses receive().
+    override suspend fun fetchNewMessages(): List<RemoteMail> = buildList {
+        receive({ emptySet() }) { add(it) }
     }
+    override suspend fun fetchNewMessages(isKnown: suspend (String, String) -> Boolean): List<RemoteMail> =
+        error("Use account-scoped known IDs and receive")
 
     suspend fun testConnection() = withContext(Dispatchers.IO) { connectAndUse("CONNECTION_TEST") { } }
 
-    private fun <T> connectAndUse(operation: String, block: (Folder) -> T): T {
+    protected suspend fun <T> connectAndUse(operation: String, mode: Int = Folder.READ_ONLY, block: suspend (Folder) -> T): T {
         var store: Store? = null
         var folder: Folder? = null
         var connected = false
-        var connectStarted: Long? = null
-        fun observe(event: String, category: String? = null, exceptionClass: String? = null) {
+        val started = System.nanoTime() / 1_000_000L
+        fun observe(event: String, failure: Throwable? = null) {
             runCatching { observation(event, mapOf("accountId" to account.id, "protocol" to account.protocol.name,
-                "operation" to operation, "elapsedMs" to connectStarted?.let { System.nanoTime() / 1_000_000L - it },
-                "category" to category, "exceptionClass" to exceptionClass)) }
+                "operation" to operation, "elapsedMs" to System.nanoTime() / 1_000_000L - started,
+                "category" to failure?.let { MailConnectionSettings.classify(it).name },
+                "exceptionClass" to failure?.javaClass?.simpleName)) }
         }
         try {
-            val session = Session.getInstance(MailConnectionSettings.properties(account))
-            store = session.getStore(MailConnectionSettings.protocolName(account.protocol))
-            connectStarted = System.nanoTime() / 1_000_000L
+            store = Session.getInstance(MailConnectionSettings.properties(account))
+                .getStore(MailConnectionSettings.protocolName(account.protocol))
             observe("MAIL_CONNECT_START")
             store.connect(account.host, account.port, account.username, password)
             connected = true
             observe("MAIL_CONNECT_SUCCESS")
             folder = store.getFolder("INBOX")
-            folder.open(Folder.READ_ONLY)
+            folder.open(mode)
             return block(folder)
         } catch (cancelled: CancellationException) {
             observe("MAIL_CONNECT_CANCELLED")
             throw cancelled
-        } catch (error: Throwable) {
-            observe(if (connected) "MAIL_SESSION_FAILURE" else "MAIL_CONNECT_FAILURE",
-                MailConnectionSettings.classify(error).name, error.javaClass.simpleName)
-            throw MailReceiverException(MailConnectionSettings.classify(error), error)
+        } catch (local: LocalMailProcessingException) {
+            throw local
+        } catch (failure: Exception) {
+            observe(if (connected) "MAIL_SESSION_FAILURE" else "MAIL_CONNECT_FAILURE", failure)
+            throw MailReceiverException(MailConnectionSettings.classify(failure), failure)
         } finally {
+            // false is essential after uncertain IMAP flag/expunge results, too.
             runCatching { if (folder?.isOpen == true) folder.close(false) }
             runCatching { store?.close() }
         }

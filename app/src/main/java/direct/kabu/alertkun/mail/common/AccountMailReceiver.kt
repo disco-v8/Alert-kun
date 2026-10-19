@@ -18,24 +18,21 @@ class AccountMailReceiver(
     private val observation: ObservationSink = { _, _ -> },
     private val localProcessedMails: (suspend (String) -> List<ReceivedMail>)? = null,
     private val resolveDeletes: (suspend (String, Set<String>, Set<String>) -> Pair<Int, Int>)? = null,
+    private val temporaryDirectory: java.io.File = java.io.File(System.getProperty("java.io.tmpdir"), "alertkun-pop3"),
     private val trace: (String) -> Unit = {},
 ) : MailReceiver {
     private val accountsById = accounts.filter { it.enabled }.associateBy { it.id }
-
-    override suspend fun fetchNewMessages(): List<RemoteMail> = buildList {
-        accountsById.values.forEach { account -> addAll(receiverFor(account).fetchNewMessages()) }
+    override suspend fun receive(knownIds: suspend (String) -> Set<String>, consume: suspend (RemoteMail) -> Unit) {
+        for (account in accountsById.values) receiverFor(account).receive(knownIds, consume)
     }
-
-    override suspend fun fetchBody(remoteMail: RemoteMail): String? =
-        accountsById[remoteMail.accountId]?.let { receiverFor(it).fetchBody(remoteMail) }
-
+    override suspend fun fetchNewMessages(): List<RemoteMail> = buildList { receive({ emptySet() }) { add(it) } }
     suspend fun testConnection(account: MailAccount) {
         receiverFor(account).testConnection()
     }
 
     override suspend fun deleteProcessedMessages(lookup: suspend (String, String) -> ReceivedMail?, now: Long) {
         accountsById.values.filter {
-            it.protocol in listOf(MailProtocol.POP3, MailProtocol.POP3S) && it.serverDeletePolicy != ServerDeletePolicy.NEVER
+            it.serverDeletePolicy != ServerDeletePolicy.NEVER
         }.forEach { account ->
             val candidates = checkNotNull(localProcessedMails) { "Local deletion candidate source is required" }
                 .invoke(account.id).asSequence().filter {
@@ -49,7 +46,11 @@ class AccountMailReceiver(
             } else {
                 // Candidates only gate the connection. The server session rechecks every UIDL and Room lookup.
                 val persist = checkNotNull(resolveDeletes) { "Deletion resolution store is required" }
-                val (deleted, absent) = (receiverFor(account) as Pop3MailReceiver).deleteCandidates(lookup, now, candidates)
+                val (deleted, absent) = when (val receiver = receiverFor(account)) {
+                    is Pop3MailReceiver -> receiver.deleteCandidates(lookup, now, candidates)
+                    is ImapMailReceiver -> receiver.deleteCandidates(lookup, now, candidates)
+                    else -> error("Unsupported protocol receiver")
+                }
                 val (deletedCount, absentCount) = persist(account.id, deleted, absent)
                 listOf("SERVER_DELETE_CONFIRMED" to deletedCount, "SERVER_UIDL_ABSENT" to absentCount).forEach { (reason, count) ->
                     if (count > 0) runCatching { observation("DELETE_CANDIDATES_RESOLVED", fields + mapOf("reason" to reason, "count" to count)) }
@@ -62,7 +63,7 @@ class AccountMailReceiver(
         val password = credentialStore.load(account.credentialKey)
             ?: throw MailReceiverException(MonitoringFailureKind.AUTHENTICATION_FAILURE)
         return when (account.protocol) {
-            MailProtocol.POP3, MailProtocol.POP3S -> Pop3MailReceiver(account, password, trace, observation)
+            MailProtocol.POP3, MailProtocol.POP3S -> Pop3MailReceiver(account, password, trace, observation, temporaryDirectory)
             MailProtocol.IMAP4, MailProtocol.IMAPS -> ImapMailReceiver(account, password, observation)
         }
     }

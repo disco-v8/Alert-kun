@@ -73,6 +73,7 @@ internal object MailConnectionSettings {
     fun classify(error: Throwable): MonitoringFailureKind {
         val chain = generateSequence(error) { it.cause?.takeUnless { cause -> cause === it } }.take(16).toList()
         chain.filterIsInstance<MailReceiverException>().firstOrNull()?.let { return it.failureKind }
+        if (chain.any { it is direct.kabu.alertkun.mail.imap.ImapRawInputStream.ProtocolViolation }) return MonitoringFailureKind.PROTOCOL_ERROR
         if (chain.any { it is java.security.cert.CertificateExpiredException || it is java.security.cert.CertificateNotYetValidException }) return MonitoringFailureKind.CERTIFICATE_EXPIRED
         if (chain.any { it.message.orEmpty().contains("subject alternative", true) || it.message.orEmpty().contains("hostname", true) || it.message.orEmpty().contains("Can't verify identity", true) || it is java.security.cert.CertPathValidatorException && it.reason == java.security.cert.PKIXReason.INVALID_NAME }) return MonitoringFailureKind.HOSTNAME_MISMATCH
         if (chain.any { it is java.security.cert.CertPathValidatorException || it.javaClass.simpleName == "SunCertPathBuilderException" || it is CertificateException && it.message.orEmpty().contains("trust anchor", true) }) return MonitoringFailureKind.CERTIFICATE_UNTRUSTED

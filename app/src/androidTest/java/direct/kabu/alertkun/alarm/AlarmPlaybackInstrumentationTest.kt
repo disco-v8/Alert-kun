@@ -63,7 +63,8 @@ class AlarmPlaybackInstrumentationTest {
 
     @Test fun oncePostsDetailsAndUsesFiniteServiceWithoutContinuousSession() {
         val result = controller.start(event("once", AlarmMode.ONCE))
-        assertEquals(AlarmDelivery.FOREGROUND_SERVICE, result.delivery)
+        assertEquals(if (Build.VERSION.SDK_INT >= 37) AlarmDelivery.EXACT_ALARM else AlarmDelivery.FOREGROUND_SERVICE,
+            result.delivery)
         assertEquals(AlarmState.IDLE, controller.currentState())
         assertNotNull(controller.pendingToken())
         await { manager.activeNotifications.any { it.id == AlarmController.NOTIFICATION_ID } }

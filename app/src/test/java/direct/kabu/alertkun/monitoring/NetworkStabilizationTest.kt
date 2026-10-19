@@ -309,6 +309,7 @@ class NetworkStabilizationTest {
         var deletions = 0
         val rows = linkedMapOf<String, ReceivedMail>()
         val store = object : MonitoringMailStore {
+            override suspend fun knownRemoteIds(accountId: String) = rows.values.filter { it.accountId==accountId }.map { it.remoteMessageId }.toSet()
             override suspend fun receivedMails() = rows.values.filter { it.processingState == MailProcessingState.RECEIVED }
             override suspend fun saveReceived(mail: ReceivedMail): Boolean {
                 if (rows.values.any { it.remoteMessageId == mail.remoteMessageId }) return false
@@ -319,12 +320,16 @@ class NetworkStabilizationTest {
             }
         }
         val receiver = object : MailReceiver {
-            override suspend fun fetchNewMessages() = listOf(RemoteMail("a", "one", "ALERT", null, emptyMap()),
-                RemoteMail("a", "two", "Other", null, emptyMap()))
-            override suspend fun fetchBody(remoteMail: RemoteMail): String {
-                bodyCalls++
-                if (bodyCalls == 1) { source.state.value = usable.copy(networkId = "new", changeVersion = 1); throw socketError() }
-                return "ALERT"
+            override suspend fun receive(knownIds:suspend(String)->Set<String>,consume:suspend(RemoteMail)->Unit) {
+                val known=knownIds("a")
+                for(id in listOf("one","two")) if(id !in known) {
+                    bodyCalls++
+                    if(id=="two" && bodyCalls==2) {
+                        source.state.value=usable.copy(networkId="new",changeVersion=1)
+                        throw socketError()
+                    }
+                    consume(RemoteMail("a",id,"Other",null,body="ALERT",bodyFetched=true))
+                }
             }
             override suspend fun deleteProcessedMessages(lookup: suspend (String, String) -> ReceivedMail?, now: Long) { deletions++ }
         }
@@ -334,6 +339,7 @@ class NetworkStabilizationTest {
         }, NetworkStabilizingMailReceiver(receiver, policy(source)),
             object : MonitoringAlarmSink { override fun start(event: direct.kabu.alertkun.alarm.AlarmEvent) { alarms++ } })
         assertTrue(coordinator.check().success)
+        assertEquals(3,bodyCalls) // First save is not re-fetched during the in-poll retry.
         assertEquals(2, rows.size); assertEquals(1, alarms); assertEquals(1, deletions)
         assertTrue(rows.values.all { it.processingState == MailProcessingState.PROCESSED })
         assertTrue(coordinator.check().success)

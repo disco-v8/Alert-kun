@@ -118,6 +118,16 @@ class PollAlarmSelectionTest {
         assertEquals(MailBackgroundColor.DEFAULT, unmatched.rows.single().backgroundColor)
     }
 
+    @Test fun completeBodyHigherPriorityBeatsLowerSubjectRule() = runBlocking {
+        val store=Store(emptyList());val events=mutableListOf<AlarmEvent>()
+        val body=high.copy(target=RuleTarget.BODY)
+        val subject=low.copy(target=RuleTarget.SUBJECT)
+        assertTrue(check(store,events,listOf(subject,body),remote=listOf(RemoteMail("a","both","WARN",null,
+            body="ALERT",bodyFetched=true))).check().success)
+        assertEquals(body.id,events.single().ruleId)
+        assertEquals(body.id,store.rows.single().matchedRuleId)
+    }
+
     @Test fun failedWinnerDoesNotFallbackFinalizeOrDeleteAndRetrySelectsSameWinner() = runBlocking {
         val store = Store(listOf(mail("alert", "ALERT"), mail("warn", "WARN")))
         val events = mutableListOf<AlarmEvent>(); var deletes = 0
