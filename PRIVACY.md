@@ -1,6 +1,6 @@
 # Alert-kun Privacy Policy
 
-対象：Alert-kun（アラートくん）Release 1.0。更新日：2026年10月16日。
+対象：Alert-kun（アラートくん）Release 1.0。更新日：2026年10月19日（Updated: October 19, 2026）。
 
 提供者：Future Versatile Group/MyDNS.JP
 
@@ -54,6 +54,8 @@ Googleによる情報の取り扱いは[Googleプライバシーポリシー](ht
 
 ## 問い合わせ
 
-問い合わせ・不具合報告は、このリポジトリのGitHub Issuesを基本窓口とします。
+一般的な問い合わせ・不具合報告は、このリポジトリのGitHub Issuesを基本窓口とします。Gateway登録情報の削除依頼など本人確認が必要な連絡や、公開できない内容は、[MyDNS.JPのお問い合わせ](https://www.mydns.jp/contact-us/)へお送りください。アラートくんについての質問も受け付けます。パスワードやtokenそのものを問い合わせへ記載しないでください。監視OFFやアンインストールではGateway側の情報は直ちに削除されません。
+
+For general questions and bug reports, use this repository's GitHub Issues. For private inquiries, including Gateway registration-data deletion requests requiring identity verification, use the [MyDNS.JP contact form](https://www.mydns.jp/contact-us/). Alert-kun questions are also accepted there. Never include passwords or tokens in an inquiry, or post account details and personal information in a public Issue. Turning monitoring off or uninstalling the app does not immediately delete Gateway records.
 
 ログや画面画像を投稿する前に、パスワード、MasterID・MasterPwd、FCM token、Gateway deviceToken、Authorization、メールアドレス、メール本文・件名・送信元などの個人情報・秘密情報を削除してください。公開Issueへ認証情報そのものを送らないでください。

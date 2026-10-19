@@ -51,6 +51,8 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 
 ## 監視
 
+- 利用者向け名称は6004を「監視状態通知」/「Monitoring state」、6003を日次の「監視ステータス通知」/「Monitoring status」とする。内部のMonitoringHealth系class/resource名、notification ID、channel IDは名称整理だけで変更しない。
+
 - 通常モードでenabled=trueのメールアカウントが0件なら、監視開始前に拒否し、既存monitoringEnabledを変更しない。既に走ったFCM・Worker・手動確認は通信・Dummy・Coordinatorを実行せず正常skipとし、成功・失敗記録へ流用しない。DummyMailReceiverはユーザーが明示的にONにしたDemo Mode（demo_mode_enabled、default false）だけで使用し、実受信と混在させない。アカウントなしを理由にDemoへ自動切替したり、既存設定・Accountを変換したりしない。
 
 - 監視状態通知6004は直近のMailCheck全体の最終結果を表示する。FCM受信直後はCHECKING（メール確認中）とし、開始・account単位の成功・retry途中・safe skipをNORMALの根拠にしない。共通Worker完了点で既存MonitoringStatusRepositoryの成功reset／失敗加算を1pollにつき1回行い、その結果を表示する。最終SUCCESSは非一致NORMAL（異常なし）、採用警報ありRULE_MATCH。最終FAILUREはFAILUREとし、設定閾値未満ではcount/threshold、到達後は連続失敗countを表示する。failure通知の発報・抑制条件は変更しない。結果表示日時は完了時刻。表示用selectedAlarmはメモリ内の成功結果だけで渡し、再handoff・別候補選定・Room再評価を行わない。専用channelとサイレント判定を維持し、OFF・古い世代の結果で通知を復活させない。observabilityはCHECKING / NORMAL / RULE_MATCH / FAILUREとRECEIPT / CHECK_RESULT、Work IDだけで結果を追跡し、通知内容・件名・差出人・ルール名をログへ出さない。
@@ -71,7 +73,7 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 - executionMutex、Mutex取得後の設定再読込、scheduleGeneration照合を壊さない。保険skipは同世代・同一保険周期内のFCM正常成功だけを根拠とし、不明・失敗・他triggerでは実行する。FCMと手動の成功元を混同せず、FCM成功で保険周期を動かさない。
 - runNowは監視ON化・世代変更を行わない。FCMは監視OFFで実行せず、明示的な手動runNowのOFF時単発確認は維持する。起動時gate、正常future schedule維持、60秒以上の時計補正rebase、timezoneで表示だけ変更する方針を維持する。
 - NetworkType.CONNECTED constraintでoffline確認を隠さない。offlineも連続失敗へ含め、新着0件の成功で失敗count・異常通知状態をresetする。
-- 日次監視ヘルス通知は初期値ONとし、正常check完了時にexecutionMutex内で判定する。初回正常checkから24時間待ち、以後は前回通知から24時間以上経過した最初の正常checkで通知する。監視または通知設定OFFで観測を解除し、再ON後も初回正常checkから24時間待つ。過去24時間に失敗があれば正常通知を出さず、連続失敗通知へ委ねる。失敗履歴を成功で消さず、skipを成功や失敗へ流用しない。異常検出件数はRoomのPROCESSEDかつalertTriggered=trueを初回保存時刻による過去24時間で数える。専用LOW channelは無音・無振動、固定notification ID 6003とし、通知設定で監視予約・Gateway登録・警報を変更しない。
+- 日次監視ステータス通知は初期値ONとし、正常check完了時にexecutionMutex内で判定する。初回正常checkから24時間待ち、以後は前回通知から24時間以上経過した最初の正常checkで通知する。監視または通知設定OFFで観測を解除し、再ON後も初回正常checkから24時間待つ。過去24時間に失敗があれば正常通知を出さず、連続失敗通知へ委ねる。失敗履歴を成功で消さず、skipを成功や失敗へ流用しない。異常検出件数はRoomのPROCESSEDかつalertTriggered=trueを初回保存時刻による過去24時間で数える。専用LOW channelは無音・無振動、固定notification ID 6003とし、通知設定で監視予約・Gateway登録・警報を変更しない。
 
 ## 警報・preview
 

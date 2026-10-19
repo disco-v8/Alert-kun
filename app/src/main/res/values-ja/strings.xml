@@ -93,7 +93,7 @@
     <string name="alarm_notification_details">%1$s\n差出人：%2$s\nルール：%3$s\n受信日時：%4$s</string>
     <string name="alarm_start_unavailable">警報音を自動開始できませんでした。アラームと通知の許可を確認するか、「警報を開始」を押してください。</string>
     <string name="alarm_start_action">警報を開始</string>
-    <string name="alarm_exact_permission_required">継続警報を使用するには「アラームとリマインダー」の許可が必要です。未許可の場合は単発警報のみ実行します。</string>
+    <string name="alarm_exact_permission_required">継続警報の自動開始には「アラームとリマインダー」の許可が必要です。Android 17以降では、アラーム種別の1・3・5回も画面OFF時の背景再生にこの許可を使用します。未許可時も有限警報は従来の起動方法を使いますが、背景音声が制限される場合があります。</string>
     <string name="alarm_allow_exact">アラームとリマインダーを許可</string>
     <string name="alarm_notifications_required">警報と停止操作を表示するため、通知を許可してください。通知が無効な間は継続鳴動を行いません。</string>
     <string name="alarm_allow_notifications">通知を許可</string>
@@ -122,7 +122,7 @@
     <string name="mydns_save_failed">設定を読み込みまたは保存できませんでした。入力内容は保持しています。再度お試しください。</string>
     <string name="mydns_rollback_failed">保存に失敗し、元の設定を完全に復元できませんでした。設定を確認して再度保存してください。</string>
     <string name="monitoring_health_enabled">異常がなくても一日一回通知</string>
-    <string name="monitoring_health_channel_name">監視ヘルス</string>
+    <string name="monitoring_health_channel_name">監視ステータス</string>
     <string name="monitoring_health_title">監視ステータス</string>
     <string name="monitoring_health_message">過去24時間、監視は正常です\n異常検出：%1$d件\n最終メール確認：%2$s</string>
     <string name="tls_validation">TLS証明書の検証</string>

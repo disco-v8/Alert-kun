@@ -26,7 +26,12 @@ Release 1.0はGitHub Releasesで署名済みAPKを配布する方針です。And
 - Android 8.0（API 26）以上
 - 動作確認済み実機：Pixel 7a / Android 17。最低対応OSを含むすべての端末・OSでの動作を確認したものではありません。
 - メールサーバーへのネットワーク接続と、対応プロトコルで利用できるアカウント
+- FCMによる主監視を利用する場合：MyDNS.JPアカウント（MasterID / MasterPwd）。A MyDNS.JP account is required for FCM-based primary monitoring.
 - 通知の許可。「停止まで継続」の自動開始には、対応Androidで「アラームとリマインダー」の許可も必要
+
+Android 17以降では、アラーム種別の1 / 3 / 5回も、画面OFF時の背景再生のため「アラームとリマインダー」の許可を使用します。未許可でも有限警報は従来のサービス起動経路を使いますが、背景音声が制限される場合があります。
+
+Continuous alarm auto-start requires the Alarms & reminders permission on supported Android versions. On Android 17 or later, Alarm-category alerts with 1, 3, or 5 cycles also use it for screen-off playback. Finite alerts without this permission retain the regular service entry, but background audio may be restricted.
 
 開発時はAndroid Studio、Android SDK 37、Gradle wrapperに対応するGradle JDKを使用します。compileSdk / targetSdkは37です。
 
@@ -48,7 +53,11 @@ Android Studioでリポジトリを開き、SDKと依存関係を準備します
 .\gradlew.bat lint
 ```
 
-Debug APKはapp/build/outputs/apk/debug/app-debug.apkに生成されます。FCMを利用する開発ビルドでは、自分のFirebaseプロジェクトの`app/google-services.json`をローカルに用意します。メールサーバーの設定やパスワードはビルドに不要です。instrumentationは専用の試験端末・エミュレーターで実行し、実運用端末ではGradleによるアプリの再インストールや試験データの変更を行わないでください。
+Debug APKはapp/build/outputs/apk/debug/app-debug.apkに生成されます。Google Services pluginは常時適用されるため、自己ビルドには自分のFirebaseプロジェクトの`app/google-services.json`をローカルに用意します。このファイルはGit管理しません。メールサーバーの設定やパスワードはビルドに不要です。instrumentationは専用の試験端末・エミュレーターで実行し、実運用端末ではGradleによるアプリの再インストールや試験データの変更を行わないでください。
+
+**独自Firebaseプロジェクトを使った自己ビルドは、そのままではMyDNS.JP公式GatewayのFCM配送対象になりません。** FCM tokenと送信元のFirebaseプロジェクトを一致させる必要があり、現在のクライアントのGateway接続先は公式サービスに固定されています。公式FCM主監視は公式配布APKで利用してください。自分のFirebaseプロジェクトでFCMを試験するには、対応する送信環境と接続先の調整が別途必要です。[Firebaseのエラーコード説明](https://firebase.google.com/docs/cloud-messaging/error-codes)も参照してください。
+
+The Google Services plugin is always applied, so a self-build needs a local `app/google-services.json` for your own Firebase project. **Such a build cannot receive FCM checks from the official MyDNS.JP Gateway as-is.** The token and sender must belong to the same Firebase project; the client currently targets the official Gateway. Use the official distributed APK for official FCM monitoring. Testing your own Firebase project requires a matching sender and an appropriate client endpoint configuration.
 
 Release APKは署名済みで配布します。署名鍵とそのパスワードはGit管理しません。
 
@@ -66,9 +75,11 @@ GatewayはGoogle Firebase Cloud Messaging（FCM）を通じてメール確認の
 
 OSSとして公開するのはAndroidクライアントです。Gateway / FCMサーバー側実装は非公開で、このリポジトリには含めません。Gatewayで扱う認証・登録情報や運用ログについては[PRIVACY.md](PRIVACY.md)を参照してください。
 
-監視中のFCM受信では専用の「異常なし」通知を1件更新します。音を避けたい場合はAndroidの通知設定で「監視状態」をサイレントにできます。警報・監視失敗・1日1回の通知とは別チャンネルです。
+監視中のFCM受信では専用の「監視状態通知」を1件表示し、受信直後は「メール確認中」、確認全体の最終結果に応じて「異常なし」・採用された警報内容・受信確認失敗へ更新します。確認開始や途中retryだけで「異常なし」にはしません。音を避けたい場合はAndroidの通知設定で「監視状態」をサイレントにできます。警報・監視失敗・1日1回の「監視ステータス通知」とは別チャンネルです。
 
 メール確認でルールに一致すると、この同じ監視状態通知にも採用された警報内容を表示します。次の正常確認で一致がなければ「異常なし」に戻ります。
+
+The Monitoring state notification shows “Checking mail” when FCM arrives, then the final result: “No issues”, the selected matching alert, or a check failure. It is separate from the once-daily Monitoring status notification.
 
 ## Documentation
 
@@ -90,7 +101,9 @@ Androidのバックグラウンド制限により確認時刻は遅れること�
 
 JSON Export / Import、添付ファイル表示、OAuth専用認可UI、複数アカウント追加導線の改善、独自BOOT_COMPLETED reconcileは現在未対応です。今後のバージョンでの実装を検討しますが、対応を約束するものではありません。安全上の制約も含め、詳細は[user-guide.mdの「現在の制約」](user-guide.md#20-現在の制約)を参照してください。
 
-問い合わせ・不具合報告は、このリポジトリの「Issues」を基本窓口とします。投稿前に[PRIVACY.mdの問い合わせ案内](PRIVACY.md#問い合わせ)をご確認ください。
+一般的な問い合わせ・不具合報告は、このリポジトリの「Issues」を基本窓口とします。Gateway登録情報の削除依頼など本人確認が必要な連絡や、公開できない内容は、[MyDNS.JPのお問い合わせ](https://www.mydns.jp/contact-us/)へお送りください。アラートくんについての質問も受け付けます。投稿前に[PRIVACY.mdの問い合わせ案内](PRIVACY.md#問い合わせ)をご確認ください。
+
+Use GitHub Issues for general reports. For private questions or Gateway registration-data deletion requests requiring identity verification, use the [MyDNS.JP contact form](https://www.mydns.jp/contact-us/), which also accepts Alert-kun questions. Never post credentials or personal information in a public Issue.
 
 ## License
 

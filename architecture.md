@@ -11,7 +11,7 @@
 | model | Android frameworkから独立したAccount・Rule・ReceivedMail・設定enum |
 | ui/main・account・rule・mail・settings・theme | Compose画面、表示mapper、ViewModel |
 | data/entity・dao・database・repository・preferences | Room、DataStore、domain変換、Repository |
-| mail/common・pop3・imap・parser | 通信、安定したリモートID、本文抽出、POP3削除 |
+| mail/common・pop3・imap・parser | 通信、安定したリモートID、本文抽出、POP3 / IMAPサーバー削除 |
 | rules | 純粋なRuleEngine |
 | monitoring | WorkManager登録、1回の確認、実行調停、状態・失敗管理 |
 | alarm | 通知、MediaPlayer、振動、有限回数制御、継続警報開始・停止 |
@@ -21,11 +21,11 @@
 
 Composeはメール通信・Room・Keystore・ルール判定本体・警報制御本体を直接実装しない。ViewModelは操作と画面状態を調整し、処理本体はRepositoryや専用クラスへ委譲する。AlarmPermissionControlsなどのUIは権限操作のためにControllerの状態を参照する。
 
-監視ヘルス通知6003と監視状態通知6004の本文タップは、OPEN_MAIN actionとCLEAR_TOP | SINGLE_TOPでMainActivityを開く。新規起動・既存ActivityのonNewIntentの両方でトップ画面へ戻し、Composeのトップまでpopするためトップ画面を追加しない。サイレント設定や通知のルール一致表示にかかわらず同じ経路。警報通知5001 / 5005は既存OPEN_RECEIVED_MAIL actionとCLEAR_TOP | SINGLE_TOPを維持し、受信メール一覧へ進む。通知タップの再利用経路から監視起動処理を再呼出ししない。
+監視ステータス通知6003と監視状態通知6004の本文タップは、OPEN_MAIN actionとCLEAR_TOP | SINGLE_TOPでMainActivityを開く。新規起動・既存ActivityのonNewIntentの両方でトップ画面へ戻し、Composeのトップまでpopするためトップ画面を追加しない。サイレント設定や通知のルール一致表示にかかわらず同じ経路。警報通知5001 / 5005は既存OPEN_RECEIVED_MAIL actionとCLEAR_TOP | SINGLE_TOPを維持し、受信メール一覧へ進む。通知タップの再利用経路から監視起動処理を再呼出ししない。
 
 監視の主経路:
 
-FCM / WorkManager保険 → MailCheckWorker → MailCheckCoordinator → MailReceiver → Room保存 → RuleEngine → poll全体の候補選定 → AlarmController → Room処理確定 → POP3削除判定
+FCM / WorkManager保険 → MailCheckWorker → MailCheckCoordinator → MailReceiver内で1通ずつ取得・Room保存・RuleEngine評価 → 全Account完了後のpoll全体候補選定 → AlarmController → Room処理確定 → POP3 / IMAPサーバー削除判定
 
 ### FCM token・Gateway登録
 
@@ -47,7 +47,7 @@ rcvintervalは登録直前にSettingsRepositoryから現在のpollIntervalMinute
 
 原画はartwork/に保持する。Alert-kun-Master.pngをアプリの基準画像とし、LauncherはこのMasterから生成する。Manifestの@mipmap/ic_launcher / @mipmap/ic_launcher_roundを使用する。Launcherは108dpのforeground/backgroundを持つAdaptive Iconを使用する。foregroundはMasterを96dp相当で中央配置し、本体・目・足を中央66dpの安全領域に収める。背景は白、monochromeはMasterのキャラクターを表す既存の通常ピクト輪郭を余白付きで使用する。再生成はtools/artwork/New-LauncherIcons.ps1で行い、原画を変更しない。Launcherの動的切替は行わない。緑色のAlert-kun-Normal.png、赤い発報中のAlert-kun-RuleMatch.png、Alert-kun-Notify.pngは原画として保持し、表示には使用しない。
 
-通知small iconは白単色・透明背景の24dp VectorDrawable。ic_notification_normalは6003と通常の6004、ic_notification_rule_matchは5001 / 5005 / 6002とルール一致の6004で使用する。6004は既存の表示用selectedAlarmの有無だけで切り替え、結果選定・警報handoff・永続化に影響しない。ピクト原画の細かなにじみを除き、ルール一致版は小サイズでも分離する6本の光線とする。
+通知small iconは白単色・透明背景の24dp VectorDrawable。ic_notification_normalは6003とCHECKING / NORMALの6004、ic_notification_rule_matchは5001 / 5005 / 6002とRULE_MATCH / FAILUREの6004で使用する。6004は表示用selectedAlarmと最終結果のFailureで切り替え、結果選定・警報handoff・永続化に影響しない。ピクト原画の細かなにじみを除き、ルール一致版は小サイズでも分離する6本の光線とする。
 
 ## 2. 永続化
 
@@ -64,7 +64,7 @@ AlertKunDatabaseの現在のschemaはv7。accounts / rules / received_mailsを�
 
 1→7のmigrationを登録し、破壊的fallbackは使用しない。6→7はreceived_mailsへlocallyDeleted（既存行はfalse）を追加し、メール内容と重複防止情報を保持する。schema JSONはapp/schemas以下に置く。AlarmModeはTEXT列にONCE / THREE_TIMES / FIVE_TIMES / UNTIL_STOPPEDを保存する。
 
-POP3削除候補の解決状態はReceivedMail.serverDeleteResolution（PENDING / DELETED / ABSENT）に保存する。完全UIDL照合と正常QUIT応答確認後だけ、削除確定・サーバー不在のUIDLをRoom transactionで解決し、以後の候補から除外する。通信・UIDL・DELE・QUIT失敗や結果不明では候補を維持する。RECEIVED / PROCESSEDと独立し、5→6 migrationは既存データをPENDINGとして保持する。SERVER_UIDL_MATCH / DELETE_CANDIDATES_RESOLVEDは件数・理由だけを記録する。
+POP3 / IMAPの削除候補の解決状態はReceivedMail.serverDeleteResolution（PENDING / DELETED / ABSENT）に保存する。POP3は完全UIDL照合と正常QUIT応答、IMAPはUIDVALIDITY:UID照合と正常EXPUNGE応答に基づいて、削除確定・サーバー不在をRoom transactionで解決し、以後の候補から除外する。UIDVALIDITY変更も保存済みIDを安全に特定できないためABSENTとする。通信・削除command・確定応答の失敗や結果不明では候補を維持する。RECEIVED / PROCESSED / UNSUPPORTEDと独立し、5→6 migrationは既存データをPENDINGとして保持する。SERVER_UIDL_MATCH / DELETE_CANDIDATES_RESOLVEDは件数・理由だけを記録する。
 
 ReceivedMailの重要な情報はid、accountId、remoteMessageId、receivedAtEpochMillis、From、ヘッダー、Subject、必要な本文、bodyFetched、processingState、alertTriggered、matchedRuleId、backgroundColor。UNIQUE(accountId, remoteMessageId)で重複保存を防ぐ。通常受信ではUIDL / UIDだけを先に保存せず、再処理に必要なデータとRECEIVEDを同じ行の挿入で確定する。UNSUPPORTEDは取得不能内容を空値にしてIDとterminal状態を同時に保存する。
 
@@ -213,13 +213,15 @@ onMessageReceivedはCHECK_MAILのみMonitoringScheduler.runNow(context, FCM)へ�
 
 ### MailCheck結果の監視状態通知
 
+利用者向け名称は6004が「監視状態」/「Monitoring state」、日次6003が「監視ステータス」/「Monitoring status」。内部のMonitoringHealth系識別子は維持し、channel ID・notification ID・判定処理を表示名整理のために変更しない。
+
 監視状態通知は全Account・限定retryを含むMailCheck全体の最終結果を表示する。FCM / WorkManager保険 / 手動 / 起動時確認は共通MailCheckWorker完了点のMailCheckCompletionHandlerを通り、既存MonitoringStatusRepositoryだけが連続失敗countを保存する。SUCCESSでcountを0へresetし、非一致ならNORMAL、成功結果selectedAlarmに採用AlarmEventがあればRULE_MATCHとする。FAILUREでは1pollにつきcountを1増加し、FAILUREを表示する。設定consecutiveFailureThreshold（1～99）未満ではcount/threshold、到達後は現在の連続失敗countを表示する。既存失敗通知6002の到達時発報・再通知抑制は変更しない。途中retry・Account単位では結果を確定せず、safe skipでは成功・失敗記録も最終結果表示も更新しない。結果の表示日時はMailCheck完了時刻とする。通知失敗で結果やcountを再計上しない。
 
 RULE_MATCHは既存alarmのtitle / subject / detailsリソースを再利用し、同じ内容の表示済み警報通知があればfallback案内も含めて本文を参照する。AlarmControllerを再呼出しせず、警報・Rule選定・Room確定・削除・skip条件を変更しない。通知失敗は監視結果へ伝播させない。監視OFFでは既存cancel、古いgenerationでは更新拒否を維持する。
 
 MONITORING_NOTIFICATION_POST / UPDATE等へresultState（CHECKING / NORMAL / RULE_MATCH / FAILURE）、notificationPhase（RECEIPT / CHECK_RESULT）、Work IDを記録する。件名・差出人・ルール名・本文は通知表示だけに使用し、永続観測ログへ保存しない。6004へ停止action・FGS・警報出力をコピーしない。
 
-監視ONのCHECK_MAIL受信時にMonitoringStatusNotifierが専用channel alertkun_monitoring_status（表示名「監視状態」/「Monitoring status」、初期IMPORTANCE_DEFAULT）・固定notification ID 6004で日時とCHECKING（メール確認中）をpost / updateし、その後に既存dispatch / enqueueへ進む。受信だけで「異常なし」と表示せず、成功記録・failure count・予定・skip条件を変更しない。最終結果で同じIDを置換する。警報5001/5005、失敗6002、日次6003のchannel / IDと分離する。OnlyAlertOnceで既存通知更新時の音・振動・heads-up再通知を抑制し、通常画面へ設定を追加しない。
+監視ONのCHECK_MAIL受信時にMonitoringStatusNotifierが専用channel alertkun_monitoring_status（表示名「監視状態」/「Monitoring state」、初期IMPORTANCE_DEFAULT）・固定notification ID 6004で日時とCHECKING（メール確認中）をpost / updateし、その後に既存dispatch / enqueueへ進む。受信だけで「異常なし」と表示せず、成功記録・failure count・予定・skip条件を変更しない。最終結果で同じIDを置換する。警報5001/5005、失敗6002、日次6003のchannel / IDと分離する。OnlyAlertOnceで既存通知更新時の音・振動・heads-up再通知を抑制し、通常画面へ設定を追加しない。
 
 現在channelのimportance / sound有無 / shouldVibrateを読み取る。MIN / LOWはサイレント相当、DEFAULTはsoundなし・振動なしの場合だけサイレント相当とし、不明・HIGH以上は案内文を表示する。DNDや端末音量による一時的無音をchannel設定済みと判断しない。既存channelのユーザー設定は上書きしない。
 
@@ -289,7 +291,7 @@ Angus Mail 2.0.4のPOP3Store.protocolConnectは一部EOFExceptionをcauseなし�
 
 ### Android metered background restriction
 
-CELLULAR上でFCMは正常受信しWorkerも起動するのに、READ_HEADERS前のDNS解決だけが失敗する場合は、UIDの `REJECT_METERED_BACKGROUND` / `METERED_USER_RESTRICTED` を確認すること。
+CELLULAR上でFCMは正常受信しWorkerも起動するのに、受信接続（operation=RECEIVE）のMAIL_CONNECT_STARTからMAIL_CONNECT_SUCCESSまでのDNS解決で失敗する場合は、UIDの `REJECT_METERED_BACKGROUND` / `METERED_USER_RESTRICTED` を確認すること。
 
 設定画面がONでもUIDの `REJECT_METERED_BACKGROUND` が存在する場合がある。「バックグラウンドデータ」を OFF → ONにした後も、実policy解除・その維持とCELLULAR / 画面OFFでの自然FCM確認成功を別々に確認する。表示・単発成功だけで解決と判断しない。
 
@@ -297,11 +299,11 @@ CELLULAR上でFCMは正常受信しWorkerも起動するのに、READ_HEADERS前
 
 ## 8. 失敗管理と表示
 
-### 1日1回の監視ヘルス通知
+### 1日1回の監視ステータス通知
 
 正常なmail checkを永続成功として記録した直後、既存executionMutex内でMonitoringHealthReporterを呼ぶ。FCM / SCHEDULED_WORK / MANUAL / STARTUPの正常成功が対象で、保険skip・OFF skip・世代不一致skipでは呼ばない。AlarmControllerと独立し、新しい定期Worker・AlarmManagerは追加しない。
 
-SettingsRepositoryのhealthNotificationEnabledは初期値true。監視設定の「監視を有効にする」直下にある「異常がなくても一日一回通知」チェックボックスで選び、他の監視項目と同じ保存操作で原子的に保存する。画面上のMonitoring OFFでは操作できないがチェック状態を保持する。保存時は既存executionMutexで通知の判定・投稿と排他し、通知設定OFFなら既存ヘルス通知だけを取り消す。Monitoring OFFでも通知しない。初回正常checkから24時間の観測期間を確保し、通知設定またはMonitoringをOFFにした場合は観測開始を解除する。再ON後も初回正常checkから24時間待つ。通常のprocess再起動・世代変更は観測開始と前回通知時刻を保持する。未完了checkの痕跡がある場合は観測期間を再開始し、知らない期間を正常と扱わない。
+SettingsRepositoryのhealthNotificationEnabledは初期値true。監視設定の「監視を有効にする」直下にある「異常がなくても一日一回通知」チェックボックスで選び、他の監視項目と同じ保存操作で原子的に保存する。画面上のMonitoring OFFでは操作できないがチェック状態を保持する。保存時は既存executionMutexで通知の判定・投稿と排他し、通知設定OFFなら既存の監視ステータス通知だけを取り消す。Monitoring OFFでも通知しない。初回正常checkから24時間の観測期間を確保し、通知設定またはMonitoringをOFFにした場合は観測開始を解除する。再ON後も初回正常checkから24時間待つ。通常のprocess再起動・世代変更は観測開始と前回通知時刻を保持する。未完了checkの痕跡がある場合は観測期間を再開始し、知らない期間を正常と扱わない。
 
 DataStoreへ観測開始、前回通知時刻、最後のmail check失敗時刻を保存する。正常判定にはMonitoring ON、設定ON、最新試行の正常成功、連続失敗0、観測開始から24時間以上、過去24時間に失敗なしを要求する。失敗時刻は成功後も消さず、offline・通信/認証/TLS・削除失敗・その他例外を既存recordFailureと同時に記録する。実チェック中のキャンセルはヘルス履歴だけを不明/中断扱いにし、既存failure countや異常通知仕様は変更しない。実チェックが世代変更中に失敗した場合もヘルス履歴の事実は残すが、旧世代から監視状態・成功・count・保険targetは書き戻さない。skipは失敗履歴を作らない。
 
@@ -354,7 +356,7 @@ UNTIL_STOPPEDおよびAPI37以上の有限ALARMの自動開始経路は、許可
 
 API37以上の有限ALARMの入口は画面OFF時の実機互換対策である。公式仕様ではexact alarm権限とUSAGE_ALARMの組合せがWIU条件の免除対象だが、Pixel 7a CP3A.261005.002.A1では直接FGSからの有限ALARMがmuteされ、exact alarm入口のUNTIL_STOPPEDは継続再生した。OSの不具合とは断定せず、通知・着信用途やAPI26～36へこの対策を広げない。ALARM_EXACT_SCHEDULED / ALARM_EXACT_DELIVEREDで入口を識別し、メール内容は記録しない。
 
-SCHEDULE_EXACT_ALARM、通知許可・channel有効状態等を確認する。権限不足やFGS開始失敗時は、全APIで直接MediaPlayerへ戻さず、説明通知と有限回の振動へ退避する。有限警報は指定回数、継続警報は1サイクルの振動を行い、通知の「警報を開始」からユーザー操作で同じモードのService開始を再試行できる。継続開始時のAudio Focus取得が拒否された場合は音を開始せず、振動とServiceは継続する。Workerはhandoff後に終了する。有限回の直接起動もAndroidの背景FGS開始制限を受け、HIGH FCMの一時許可などが終了していれば拒否され得る。
+SCHEDULE_EXACT_ALARM、通知許可・channel有効状態等を確認する。exact alarm権限がない場合、UNTIL_STOPPEDは説明通知と1サイクルの振動へ退避する。有限警報は通知が許可されていれば直接Service起動を維持し、exact alarm権限不足だけでは通知fallbackへ切り替えない。通知不許可やFGS開始失敗では直接MediaPlayerへ戻さず、説明通知と有限回の振動へ退避する。有限警報は指定回数、継続警報は1サイクルの振動を行い、通知の「警報を開始」からユーザー操作で同じモードのService開始を再試行できる。継続開始時のAudio Focus取得が拒否された場合は音を開始せず、振動とServiceは継続する。Workerはhandoff後に終了する。有限回の直接起動もAndroidの背景FGS開始制限を受け、HIGH FCMの一時許可などが終了していれば拒否され得る。
 
 PendingAlarmStoreはtokenと最新AlarmEventを保持し、古いtokenの開始を拒否する。新警報で既存出力を置換し、queueを作らない。Stop actionはpending exact alarm、pending情報、音、振動、通知、Serviceを解除する。Serviceは自身の起動・foreground管理を担当し、実出力は同じAlarmControllerへ委譲する。プロセス・端末再起動後の無条件な継続再開は保証しない。
 
