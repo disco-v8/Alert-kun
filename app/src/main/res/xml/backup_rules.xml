@@ -6,6 +6,7 @@
    See https://developer.android.com/about/versions/12/backup-restore
 -->
 <full-backup-content>
+    <exclude domain="sharedpref" path="gateway_registration_pending.xml" />
     <exclude domain="sharedpref" path="pending_alarm.xml" />
     <exclude domain="file" path="observability/" />
     <!--

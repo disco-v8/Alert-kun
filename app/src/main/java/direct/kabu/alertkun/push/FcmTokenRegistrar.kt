@@ -19,76 +19,83 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** Platform HTTPS only. Secrets never enter result objects or observation metadata. */
+/** Two-phase registration. Pending state is durable before the first HTTPS request. */
 class FcmTokenRegistrar internal constructor(
     private val credentials: CredentialStore,
     private val observation: ObservationSink = { _, _ -> },
     private val openConnection: (String) -> HttpURLConnection = {
         URL(BASE_URL + it).openConnection() as HttpsURLConnection
     },
+    private val pending: PendingRegistrationStore = PendingRegistrationStore(credentials),
+    private val now: () -> Long = System::currentTimeMillis,
 ) {
-    suspend fun register(masterId: String, token: String, intervalMinutes: Int): GatewayRegistrationResult =
-        withContext(Dispatchers.IO) {
-            if (masterId.isBlank()) return@withContext GatewayRegistrationResult(GatewayRegistrationKind.SKIPPED)
-            require(token.isNotBlank())
-            require(intervalMinutes in 1..1500)
-            try {
-                var bearer = ensureGatewayAuthenticated(masterId, token, intervalMinutes, 0)
-                if (bearer.token == null) return@withContext bearer.result
-                var result = setInterval(bearer.token, token, intervalMinutes, 0)
-                if (result.httpStatus == 401) {
-                    credentials.delete(DEVICE_TOKEN_KEY)
-                    event("GATEWAY_AUTH_RETRY", intervalMinutes, 1, result)
-                    bearer = ensureGatewayAuthenticated(masterId, token, intervalMinutes, 1)
-                    if (bearer.token == null) return@withContext bearer.result
-                    result = setInterval(bearer.token, token, intervalMinutes, 1)
-                    if (result.httpStatus == 401) credentials.delete(DEVICE_TOKEN_KEY)
-                }
-                result
-            } catch (_: Exception) {
-                // Credential persistence/read failures are not network authentication failures.
-                val result = GatewayRegistrationResult(GatewayRegistrationKind.STORAGE_ERROR)
-                event("GATEWAY_AUTH_FAILURE", intervalMinutes, 0, result)
-                result
-            }
-        }
-
-    private fun ensureGatewayAuthenticated(masterId: String, fcmToken: String, interval: Int, retry: Int): Authentication {
-        credentials.load(DEVICE_TOKEN_KEY)?.takeIf { it.isNotBlank() }?.let {
-            return Authentication(it, GatewayRegistrationResult(GatewayRegistrationKind.SUCCESS))
-        }
-        val password = credentials.load(MyDnsSettingsRepository.CREDENTIAL_KEY)
-        if (password.isNullOrEmpty()) return Authentication(null, GatewayRegistrationResult(GatewayRegistrationKind.NOT_CONFIGURED))
-        event("GATEWAY_AUTH_START", interval, retry)
-        val response = post("auth", buildJsonObject {
-            put("masterid", masterId)
-            put("masterpwd", password)
-            put("fcmtoken", fcmToken)
-        }, null)
-        val issued = (response.json?.get("deviceToken") as? JsonPrimitive)?.takeIf { it.isString }?.content
-        var result = response.result
-        if (result.kind == GatewayRegistrationKind.SUCCESS) {
-            if (issued.isNullOrBlank() || issued.length > 1024 || issued.any { it <= ' ' || it.code >= 127 }) {
-                result = GatewayRegistrationResult(GatewayRegistrationKind.RESPONSE_ERROR, result.httpStatus)
-            } else {
-                credentials.save(DEVICE_TOKEN_KEY, issued)
-                check(credentials.load(DEVICE_TOKEN_KEY) == issued)
-                event("GATEWAY_AUTH_SUCCESS", interval, retry, result)
-                return Authentication(issued, result)
-            }
-        }
-        event("GATEWAY_AUTH_FAILURE", interval, retry, result)
-        return Authentication(null, result)
+    internal fun prepare(target: FcmRegistrationTarget, token: String): PendingRegistration {
+        val identity = credentials.load(IDENTITY_VERSION_KEY) ?: "initial"
+        pending.read()?.takeIf { it.matches(target, token, identity, now()) }?.let { return it }
+        return PendingRegistration(target.masterId, token, target.intervalMinutes, target.revision, identity,
+            PendingRegistration.randomSecret(), PendingRegistration.randomSecret(), now()).also { pending.save(it) }
     }
 
-    private fun setInterval(bearer: String, token: String, interval: Int, retry: Int): GatewayRegistrationResult {
-        event("GATEWAY_SET_INTERVAL_START", interval, retry)
-        val result = post("set-interval", buildJsonObject {
-            put("fcmtoken", token)
-            put("rcvinterval", interval)
-        }, bearer).result
-        event(if (result.kind == GatewayRegistrationKind.SUCCESS) "GATEWAY_SET_INTERVAL_SUCCESS" else "GATEWAY_SET_INTERVAL_FAILURE",
-            interval, retry, result)
+    suspend fun register(masterId: String, token: String, intervalMinutes: Int, revision: Long = 0): GatewayRegistrationResult =
+        withContext(Dispatchers.IO) {
+            if (masterId.isBlank()) return@withContext GatewayRegistrationResult(GatewayRegistrationKind.SKIPPED)
+            require(token.isNotBlank() && token.length <= 4096)
+            require(intervalMinutes in 1..1500)
+            try {
+                val target = FcmRegistrationTarget(masterId, intervalMinutes, revision = revision)
+                val p = prepare(target, token)
+                if (p.challenge != null && p.requestId != null) confirm(p) else begin(p)
+            } catch (error: kotlinx.coroutines.CancellationException) { throw error
+            } catch (_: Exception) { GatewayRegistrationResult(GatewayRegistrationKind.STORAGE_ERROR) }
+        }
+
+    private fun begin(initial: PendingRegistration): GatewayRegistrationResult {
+        var p = initial
+        var bearer = credentials.load(DEVICE_TOKEN_KEY)?.takeIf { it.isNotBlank() }
+        var response = beginRequest(p, bearer)
+        if (response.result.httpStatus == 401 && bearer != null) {
+            credentials.delete(DEVICE_TOKEN_KEY)
+            pending.clearIf(p.nonce)
+            p = prepare(FcmRegistrationTarget(p.masterId, p.interval, revision = p.revision), p.token)
+            bearer = null
+            response = beginRequest(p, bearer)
+        }
+        // A pending response is not an authentication failure and never replaces an existing bearer.
+        event("GATEWAY_REGISTRATION_BEGIN", p.interval, response.result)
+        return response.result
+    }
+
+    private fun beginRequest(p: PendingRegistration, bearer: String?): Response {
+        val password = if (bearer == null) credentials.load(MyDnsSettingsRepository.CREDENTIAL_KEY) else null
+        if (bearer == null && password.isNullOrEmpty()) return Response(GatewayRegistrationResult(GatewayRegistrationKind.NOT_CONFIGURED))
+        return post("registration/begin", buildJsonObject {
+            if (bearer == null) { put("masterid", p.masterId); put("masterpwd", password!!) }
+            put("fcmtoken", p.token); put("rcvinterval", p.interval)
+            put("clientNonce", p.nonce); put("replyKeyHash", PendingRegistration.sha256(p.replyKey))
+        }, bearer)
+    }
+
+    private fun confirm(p: PendingRegistration): GatewayRegistrationResult {
+        val response = post("registration/confirm", buildJsonObject {
+            put("requestId", p.requestId!!); put("challenge", p.challenge!!)
+            put("challengeVersion", p.challengeVersion)
+            put("clientNonce", p.nonce); put("replyKey", p.replyKey); put("fcmtoken", p.token)
+        }, null)
+        var result = response.result
+        if (result.kind == GatewayRegistrationKind.SUCCESS) {
+            val issued = (response.json?.get("deviceToken") as? JsonPrimitive)?.takeIf { it.isString }?.content
+            if (issued?.matches(Regex("[A-Za-z0-9_-]{43}")) != true) {
+                result = GatewayRegistrationResult(GatewayRegistrationKind.RESPONSE_ERROR, result.httpStatus)
+            } else {
+                // If save/readback fails, retain request and proof so the identical issued bearer can be recovered.
+                credentials.save(DEVICE_TOKEN_KEY, issued)
+                check(credentials.load(DEVICE_TOKEN_KEY) == issued)
+                pending.clearIf(p.nonce)
+            }
+        } else if (result.httpStatus in listOf(403, 409, 410)) {
+            pending.clearIf(p.nonce)
+        }
+        event("GATEWAY_REGISTRATION_CONFIRM", p.interval, result)
         return result
     }
 
@@ -108,7 +115,7 @@ class FcmTokenRegistrar internal constructor(
             connection.setFixedLengthStreamingMode(bytes.size)
             connection.outputStream.use { it.write(bytes) }
             val status = connection.responseCode
-            if (status != 200) return Response(GatewayRegistrationResult(
+            if (status != 200 && status != 202) return Response(GatewayRegistrationResult(
                 if (status == 401) GatewayRegistrationKind.AUTHENTICATION_ERROR else GatewayRegistrationKind.HTTP_ERROR, status))
             val body = connection.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
                 val buffer = CharArray(8193)
@@ -125,7 +132,8 @@ class FcmTokenRegistrar internal constructor(
             }
             val kind = when {
                 parsed == null -> GatewayRegistrationKind.JSON_ERROR
-                parsed["status"] == JsonPrimitive("success") -> GatewayRegistrationKind.SUCCESS
+                status == 202 && parsed["status"] == JsonPrimitive("pending") -> GatewayRegistrationKind.PENDING
+                status == 200 && parsed["status"] == JsonPrimitive("success") -> GatewayRegistrationKind.SUCCESS
                 else -> GatewayRegistrationKind.RESPONSE_ERROR
             }
             return Response(GatewayRegistrationResult(kind, status), parsed)
@@ -137,20 +145,17 @@ class FcmTokenRegistrar internal constructor(
         } finally { connection?.disconnect() }
     }
 
-    private fun event(name: String, interval: Int, retry: Int, result: GatewayRegistrationResult? = null) {
-        runCatching { observation(name, mapOf("interval" to interval, "retryNumber" to retry,
-            "httpStatus" to result?.httpStatus, "category" to result?.kind?.name)) }
+    private fun event(name: String, interval: Int, result: GatewayRegistrationResult) {
+        runCatching { observation(name, mapOf("interval" to interval,
+            "httpStatus" to result.httpStatus, "category" to result.kind.name)) }
     }
-
-    private class Authentication(val token: String?, val result: GatewayRegistrationResult)
     private class Response(val result: GatewayRegistrationResult, val json: JsonObject? = null)
-
     companion object {
         const val DEVICE_TOKEN_KEY = "fcm_gateway_device_token_v1"
+        internal const val IDENTITY_VERSION_KEY = "gateway_identity_version_v1"
         private const val BASE_URL = "https://fcm.gpg.jp:8119/alertkun-api/"
     }
 }
-
-enum class GatewayRegistrationKind { SUCCESS, SKIPPED, NOT_CONFIGURED, AUTHENTICATION_ERROR, STORAGE_ERROR,
+enum class GatewayRegistrationKind { SUCCESS, PENDING, SKIPPED, NOT_CONFIGURED, AUTHENTICATION_ERROR, STORAGE_ERROR,
     DNS_ERROR, CONNECTION_ERROR, TIMEOUT, TLS_ERROR, NETWORK_ERROR, HTTP_ERROR, JSON_ERROR, RESPONSE_ERROR }
 data class GatewayRegistrationResult(val kind: GatewayRegistrationKind, val httpStatus: Int? = null)

@@ -22,6 +22,9 @@ class AlertKunFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
+        if (dispatchRegistrationVerification(message.data) {
+            FcmRegistrationCoordinator.receiveVerification(applicationContext, it)
+        }) return
         // Never log arbitrary data: unknown actions may contain untrusted or private values.
         val accepted = message.data["action"] == FcmMailCheckDispatcher.CHECK_MAIL
         val messageHash = ObservationFormat.hash(message.messageId)

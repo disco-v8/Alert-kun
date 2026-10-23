@@ -20,8 +20,8 @@ interface CredentialStore {
 
 class CredentialAccessException : Exception("Unable to read encrypted credential")
 
-class AndroidKeystoreCredentialStore(context: Context) : CredentialStore {
-    private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+class AndroidKeystoreCredentialStore(context: Context, preferencesName: String = PREFERENCES_NAME) : CredentialStore {
+    private val preferences = context.applicationContext.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
 
     override fun save(key: String, password: String) {
         val cipher = Cipher.getInstance(TRANSFORMATION).apply { init(Cipher.ENCRYPT_MODE, secretKey()) }

@@ -54,7 +54,9 @@ class MyDnsSettingsRepositoryTest {
         repository.save("  test-master  ", "private-password")
         assertEquals("test-master", normalSetting)
         assertEquals(MyDnsSavedSettings("test-master", true), repository.read())
-        assertEquals(mapOf(MyDnsSettingsRepository.CREDENTIAL_KEY to "private-password"), credentials.values)
+        assertEquals("private-password", credentials.load(MyDnsSettingsRepository.CREDENTIAL_KEY))
+        assertNotNull(credentials.load(FcmTokenRegistrar.IDENTITY_VERSION_KEY))
+        assertEquals(setOf(MyDnsSettingsRepository.CREDENTIAL_KEY, FcmTokenRegistrar.IDENTITY_VERSION_KEY), credentials.values.keys)
         assertFalse(normalSetting.contains("private-password"))
     }
 
@@ -95,13 +97,34 @@ class MyDnsSettingsRepositoryTest {
     }
 
     @Test fun failedCompensationIsReported() = runBlocking {
+        val values = mutableMapOf(MyDnsSettingsRepository.CREDENTIAL_KEY to "old")
         val credentials = object : CredentialStore {
-            override fun load(key: String) = "old"
-            override fun save(key: String, password: String) { error("Cannot persist") }
+            override fun load(key: String) = values[key]
+            override fun save(key: String, password: String) {
+                if (key == FcmTokenRegistrar.IDENTITY_VERSION_KEY) values[key] = password
+                else error("Cannot persist or compensate password")
+            }
             override fun delete(key: String) = Unit
         }
         try { MyDnsSettingsRepository(credentials, { "old-id" }, {}).save("new-id", "new"); fail("Expected failure") }
         catch (error: MyDnsSaveException) { assertEquals(MyDnsSaveFailure.ROLLBACK, error.kind) }
+    }
+
+    @Test fun identityFenceAndBearerRemovalPrecedeNewPasswordWrite() = runBlocking {
+        val values = mutableMapOf(MyDnsSettingsRepository.CREDENTIAL_KEY to "old", FcmTokenRegistrar.DEVICE_TOKEN_KEY to "old-bearer")
+        val credentials = object : CredentialStore {
+            override fun load(key: String) = values[key]
+            override fun save(key: String, password: String) {
+                if (key == MyDnsSettingsRepository.CREDENTIAL_KEY) {
+                    assertNotNull(values[FcmTokenRegistrar.IDENTITY_VERSION_KEY])
+                    assertNull(values[FcmTokenRegistrar.DEVICE_TOKEN_KEY])
+                }
+                values[key] = password
+            }
+            override fun delete(key: String) { values.remove(key) }
+        }
+        MyDnsSettingsRepository(credentials, { "same" }, {}).save("same", "new")
+        assertEquals("new", values[MyDnsSettingsRepository.CREDENTIAL_KEY])
     }
 
     private class MemoryCredentials : CredentialStore {

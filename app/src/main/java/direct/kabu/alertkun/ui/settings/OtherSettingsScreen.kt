@@ -121,6 +121,8 @@ fun OtherSettingsScreen(
             if (startBlocked) Text(stringResource(R.string.monitoring_no_account_start_blocked), Modifier.testTag("monitoring_start_blocked"))
             HorizontalDivider()
             LocalMailSettingsSection()
+            HorizontalDivider()
+            ObservationLogExportSection()
             HorizontalDivider(Modifier.testTag("alarm_test_divider"))
             Text(stringResource(R.string.developer_tools), Modifier.testTag("developer_tools"))
             androidx.compose.foundation.layout.Row {

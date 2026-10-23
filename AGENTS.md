@@ -69,7 +69,7 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 - default network changeはINTERNET / VALIDATEDを補助情報として、1チェック全体で安定化とretry間隔の待機を合わせて合計最大8秒を行う。default networkが存在すれば実メール接続結果を最終判定とし、読み取り通信の型で判定できる一時的ネットワーク例外だけ、networkChangedの有無によらず1チェック全体で最大2回retry（読み取り通信は最大3試行）する。retry間隔は3秒・5秒を基本とし共有待機予算の残りまで短縮、残り予算3秒未満では即retryせず失敗を返す。auth / TLS / certificate / protocolエラーはretryしない。復旧して正常完了した途中のエラーをfailure countへ加算しない。Coordinator・警報・削除全体を再実行せず、メール保存・警報の重複を防ぎ、callbackを終了・キャンセル時に解除する。
 
 - FCMを主監視、WorkManagerを保険・整合確認として使用する。常駐MonitoringService、dataSync FGS、監視用AlarmManager、長時間polling loop、独自長時間WakeLockを導入しない。
-- 1 Workerは1回のboundedなcheckをCoordinatorへ委譲する。FCM登録間隔は設定値、保険はmax(設定値, 15分)のunique PeriodicWork。OneTimeWorkはFCM・手動・起動時の単発確認用途だけとする。正確な時刻を保証しない。
+- 1 Workerは1回のboundedなcheckをCoordinatorへ委譲する。FCM登録間隔は設定値、保険はmax(設定値, 15分)のunique PeriodicWork。メール確認用OneTimeWorkはFCM・手動・起動時の単発確認用途だけとする。登録確認用Workerはメール確認から独立させる。正確な時刻を保証しない。
 - executionMutex、Mutex取得後の設定再読込、scheduleGeneration照合を壊さない。保険skipは同世代・同一保険周期内のFCM正常成功だけを根拠とし、不明・失敗・他triggerでは実行する。FCMと手動の成功元を混同せず、FCM成功で保険周期を動かさない。
 - runNowは監視ON化・世代変更を行わない。FCMは監視OFFで実行せず、明示的な手動runNowのOFF時単発確認は維持する。起動時gate、正常future schedule維持、60秒以上の時計補正rebase、timezoneで表示だけ変更する方針を維持する。
 - NetworkType.CONNECTED constraintでoffline確認を隠さない。offlineも連続失敗へ含め、新着0件の成功で失敗count・異常通知状態をresetする。
@@ -104,7 +104,7 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 
 ## 認証・TLS・公開情報
 
-- Gateway一次認証はHTTPS /authへMasterID・MasterPwd・現在FCM tokenを送信する。deviceTokenはCredentialStoreのfcm_gateway_device_token_v1へ暗号化保存する。/set-intervalはAuthorization Bearer必須でbodyはfcmtoken / rcvintervalだけ。401時だけBearerを削除し、再認証と再試行は最大1回。401以外の障害でtokenを削除しない。MasterID / MasterPwd変更時は旧Bearerを破棄し、設定保存と認証・token保存を共通の専用mutexで保護する。秘密値・Authorization・FCM tokenの一部もログへ出さず、Bearer用UIや監視OFF解除APIを追加しない。
+- Gateway登録ではFCMによる端末確認を必須とする。開始要求の送信前にローカル未完了要求・nonce・確認開始元の秘密値を暗号化保存し、現在のMasterID・FCM token・設定revision・認証情報世代・期限との一致を確認する。FCM tokenの文字列やVERIFY_REGISTRATION受信だけで応答しない。確認は専用Workerで行い、CHECK_MAIL・監視状態通知・警報へ流さない。確認待ちを認証失敗・登録成功とせず、確認不能時に既存の正常な登録を失効させない。応答消失・再利用・逆順配送・並行要求、複数端末・正当なMasterID変更・token更新を検証し、旧APIへfallbackしない。deviceTokenはCredentialStoreへ暗号化保存する。開始時のBearer401だけで破棄して一次認証を1回試し、401以外では維持する。MasterID / MasterPwd変更時は、新しい秘密情報の保存前に旧要求を永続世代で無効化し、旧Bearerを破棄する。設定保存と登録・token保存を専用mutexで保護し、補償で旧世代・Bearerを復活させない。秘密値・Authorization・FCM tokenの一部・nonce・challengeをログやWorkManager入出力へ出さず、新規画面・追加権限・常駐処理を設けない。
 
 - パスワード・token・秘密鍵・本文全文をログへ出さない。Room / DataStore / 設定JSONへパスワードを平文保存しない。
 - 保存済みパスワードをUIの実値へ戻さず、固定マスクを保存しない。空入力による既存秘密情報の維持を壊さない。

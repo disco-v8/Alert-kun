@@ -56,7 +56,7 @@ internal fun MyDnsSettingsContent(
             Modifier.testTag("mydns_save_status"), color = MaterialTheme.colorScheme.error)
         val gatewayError = when (state.gatewayResult) {
             GatewayRegistrationKind.AUTHENTICATION_ERROR, GatewayRegistrationKind.NOT_CONFIGURED -> R.string.mydns_gateway_auth_failed
-            null, GatewayRegistrationKind.SUCCESS, GatewayRegistrationKind.SKIPPED -> null
+            null, GatewayRegistrationKind.SUCCESS, GatewayRegistrationKind.PENDING, GatewayRegistrationKind.SKIPPED -> null
             else -> R.string.mydns_gateway_unavailable
         }
         if (gatewayError != null) Text(stringResource(gatewayError), Modifier.testTag("mydns_gateway_status"),

@@ -159,4 +159,13 @@
     <string name="demo_mode">Demo Mode</string>
     <string name="demo_mode_description">Use test mail data without connecting to a real mail server.</string>
     <string name="demo_mode_active">Demo Mode is active</string>
+    <string name="diagnostics">Diagnostics</string>
+    <string name="observation_export_save">Export observation logs</string>
+    <string name="observation_export_description">Save monitoring and connection diagnostic logs to a ZIP file.</string>
+    <string name="observation_export_privacy">Logs may contain diagnostic information such as account identifiers, timestamps and connection states. Check the ZIP before sharing it.</string>
+    <string name="observation_export_running">Saving observation logs…</string>
+    <string name="observation_export_success">Saved observation logs. Files found: %1$d; files saved: %2$d.</string>
+    <string name="observation_export_no_files">No observation logs to save. Files found: %1$d; files saved: %2$d.</string>
+    <string name="observation_export_failure">Save failed. Files found: %1$d; files written before completion: %2$d. An incomplete ZIP may remain. Please save again.</string>
+    <string name="observation_export_picker_failed">Unable to open the file picker. Please try again.</string>
 </resources>

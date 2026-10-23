@@ -4,6 +4,14 @@ Alert-kun requires Android 8.0 (API 26) or later. See the [Japanese user guide](
 
 **A MyDNS.JP account is required to use FCM-based periodic monitoring.** Enter and save the account's MasterID and MasterPwd under “MyDNS.JP User Information” in Settings.
 
+## Automatic device confirmation
+
+Gateway registration completes only after MyDNS.JP authentication and automatic FCM confirmation by the app instance that initiated the request. No additional screen or approval is required. Confirmation messages do not start mail checks or alerts. Saving settings locally does not mean registration has completed.
+
+FCM delivery and background execution may be delayed. A pending request lasts 30 minutes, with limited retries. After those retries, opening the app, changing settings or a token update provides the next opportunity. Pending or failed confirmation preserves an existing valid registration and backup checks. There is no fallback to the old registration protocol.
+
+One MasterID can serve multiple devices. A new owner can enter their own MyDNS.JP credentials on a transferred device and complete automatic confirmation without the previous owner's approval or password. Successful registration, including re-registration, resets the sending reference; pending requests do not.
+
 ## Recommended mailbox and message format
 
 Use a mailbox dedicated to Alert-kun or monitoring notifications. Sharing a personal or general business mailbox is not recommended, especially when server deletion is enabled. This is a recommendation, not a registration restriction.
@@ -49,6 +57,14 @@ An incoming FCM check request shows “Checking mail”. The same notification i
 ## Once-daily Monitoring status notification
 
 The separate Monitoring status notification is enabled by default and reports healthy monitoring and the number of selected alerts over the past 24 hours. Its first report waits for 24 hours after the first successful check; later reports occur on the first successful check at least 24 hours after the previous report. Failures during that period suppress the normal daily report. This notification uses a separate silent channel and is distinct from the per-check Monitoring state notification.
+
+## Export observation logs
+
+In Settings, select **Diagnostics → Export observation logs** near the verification tools. Choose a destination and filename in Android's file picker, then save the ZIP. This works with monitoring and Demo Mode either on or off; no settings need to be saved again.
+
+The ZIP contains all retained observation logs, including daily files, split files and legacy rotations, with their original names and bytes. Logs may contain account identifiers, timestamps and connection states. Review the contents before sharing. This exports diagnostic logs only, not settings, mail bodies or credentials. The app does not upload or automatically share the ZIP.
+
+The screen reports files found, files saved and success, failure or no files. Cancelling the picker writes nothing. Original logs, monitoring settings and failure counters remain unchanged. Bytes appended after each file's snapshot are excluded; export again to collect later activity. A failed save may leave an incomplete ZIP; do not treat it as a complete archive. If no logs exist, the picker may leave an empty destination file.
 
 ## Self-builds and the official FCM service
 

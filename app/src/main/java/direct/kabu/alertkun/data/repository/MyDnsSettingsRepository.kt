@@ -48,19 +48,24 @@ class MyDnsSettingsRepository internal constructor(
                     var passwordWriteAttempted = false
                     var idWriteAttempted = false
                     try {
+                        val changed = previousId != masterId.trim() ||
+                            (newPassword.isNotEmpty() && (previousUnreadable || newPassword != previousPassword))
+                        // Fence pending requests before any new secret or identity can become visible.
+                        // Never restore the old fence or bearer on compensation.
+                        if (changed) {
+                            // Persist a fence even for password-only changes and failed save compensation.
+                            val identityVersion = java.util.UUID.randomUUID().toString()
+                            credentials.save(FcmTokenRegistrar.IDENTITY_VERSION_KEY, identityVersion)
+                            check(credentials.load(FcmTokenRegistrar.IDENTITY_VERSION_KEY) == identityVersion)
+                            credentials.delete(FcmTokenRegistrar.DEVICE_TOKEN_KEY)
+                            check(credentials.load(FcmTokenRegistrar.DEVICE_TOKEN_KEY) == null)
+                        }
                         if (newPassword.isNotEmpty()) {
                             passwordWriteAttempted = true
                             credentials.save(CREDENTIAL_KEY, newPassword)
                         }
                         val loaded = credentials.load(CREDENTIAL_KEY)
                         check(newPassword.isEmpty() || loaded == newPassword)
-                        val changed = previousId != masterId.trim() ||
-                            (newPassword.isNotEmpty() && (previousUnreadable || newPassword != previousPassword))
-                        // Invalidate before publishing a different identity. Never restore an old bearer on rollback.
-                        if (changed) {
-                            credentials.delete(FcmTokenRegistrar.DEVICE_TOKEN_KEY)
-                            check(credentials.load(FcmTokenRegistrar.DEVICE_TOKEN_KEY) == null)
-                        }
                         idWriteAttempted = true
                         writeMasterId(masterId.trim())
                         if (changed && previousId == masterId.trim()) passwordChanges.tryEmit(Unit)
