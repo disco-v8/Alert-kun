@@ -8,7 +8,7 @@ import direct.kabu.alertkun.model.MonitoringState
 internal sealed class MonitoringStatusResult(val observationState: String) {
     data object Checking : MonitoringStatusResult("CHECKING")
     data class Success(val selectedAlarm: AlarmEvent?) : MonitoringStatusResult(if (selectedAlarm == null) "NORMAL" else "RULE_MATCH")
-    data class Failure(val count: Int, val threshold: Int) : MonitoringStatusResult("FAILURE")
+    data class Failure(val count: Int, val threshold: Int, val cellularRestrictionSuspected: Boolean = false) : MonitoringStatusResult("FAILURE")
 }
 
 internal data class MailCheckCompletion(
@@ -20,11 +20,11 @@ internal data class MailCheckCompletion(
 /** Called once after all accounts and bounded read retries finish. The repository owns accounting. */
 internal class MailCheckCompletionHandler(private val status: MonitoringStatusRepository) {
     suspend fun complete(result: MailCheckResult, completedAt: Long, threshold: Int,
-        trigger: MailCheckTrigger, generation: Long): MailCheckCompletion {
+        trigger: MailCheckTrigger, generation: Long, cellularRestrictionSuspected: Boolean = false): MailCheckCompletion {
         if (result.success) return MailCheckCompletion(status.recordSuccess(completedAt, trigger, generation),
             MonitoringStatusResult.Success(result.selectedAlarm))
         val failure = status.recordFailure(completedAt, threshold, generation)
         return MailCheckCompletion(failure.state,
-            MonitoringStatusResult.Failure(failure.state.consecutiveFailureCount, threshold), failure.shouldNotify)
+            MonitoringStatusResult.Failure(failure.state.consecutiveFailureCount, threshold, cellularRestrictionSuspected), failure.shouldNotify)
     }
 }

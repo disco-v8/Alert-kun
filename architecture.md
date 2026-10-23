@@ -221,6 +221,8 @@ onMessageReceivedはCHECK_MAILのみMonitoringScheduler.runNow(context, FCM)へ�
 
 ### MailCheck結果の監視状態通知
 
+Cellular制限の案内は読取試行内の表示専用CellularRestrictionEvidenceで判定する。DefaultNetworkMonitorが読取開始・失敗時のdefault network識別子、changeVersion、Cellular単独transport、OSのblocked callbackまたはrestrictBackgroundStatus=ENABLEDを照合する。同じ試行の型で分類できる通信例外と、Coordinatorが返した同一例外による最終失敗だけを対象にする。ネットワーク切替・喪失・不明・VPN・Wi-Fi・認証/TLS/ローカルエラー・正常終了では案内を出さない。結果をMonitor破棄前にBooleanへ縮約し、MailCheck完了点からFailure表示へ渡す。DemoにはMonitorを生成せず、ログファイルを検索しない。表示情報をreadiness・retry・失敗回数・監視制御へ流用しない。
+
 利用者向け名称は6004が「監視状態」/「Monitoring state」、日次6003が「監視ステータス」/「Monitoring status」。内部のMonitoringHealth系識別子は維持し、channel ID・notification ID・判定処理を表示名整理のために変更しない。
 
 監視状態通知は全Account・限定retryを含むMailCheck全体の最終結果を表示する。FCM / WorkManager保険 / 手動 / 起動時確認は共通MailCheckWorker完了点のMailCheckCompletionHandlerを通り、既存MonitoringStatusRepositoryだけが連続失敗countを保存する。SUCCESSでcountを0へresetし、非一致ならNORMAL、成功結果selectedAlarmに採用AlarmEventがあればRULE_MATCHとする。FAILUREでは1pollにつきcountを1増加し、FAILUREを表示する。設定consecutiveFailureThreshold（1～99）未満ではcount/threshold、到達後は現在の連続失敗countを表示する。既存失敗通知6002の到達時発報・再通知抑制は変更しない。途中retry・Account単位では結果を確定せず、safe skipでは成功・失敗記録も最終結果表示も更新しない。結果の表示日時はMailCheck完了時刻とする。通知失敗で結果やcountを再計上しない。
@@ -249,9 +251,9 @@ Work IDをWorker・チェック・接続・networkイベントへ渡す。FCM me
 
 debug buildはadb exec-out run-as direct.kabu.alertkun tar -cf - files/observabilityでroot不要の回収が可能。Releaseにも記録するが、非debuggable buildのrun-as回収はできない。
 
-設定の独立した「診断」項目から、Debug / Release共通で観測ログをZIPへ保存できる。ActivityResultContracts.CreateDocument("application/zip")で利用者が保存先を選び、ObservationLogExportViewModelがObservationLogExporterへ委譲する。監視・Demo Modeの状態や設定保存を条件にせず、キャンセルでは書き出しを呼ばない。アカウント識別子・時刻・通信状態等が含まれ得ることと、対象件数・書き込み完了件数・最終成否をUIへ表示する。
+通常設定画面に観測ログ保存UIは設けない。内部のObservationLogExporterは診断用の非公開実装として維持するが、画面・ViewModelからの呼出経路はない。
 
-exporterはDispatchers.IOでfilesDir/observability直下の通常ログだけを扱う。日付付き・同日分割・既存の旧形式（monitoring-observation.log、monitoring-observation.1～3.log / monitoring-observation.log.1～3）を許可し、作業ファイル・子ディレクトリ・シンボリックリンク・その他のprivate fileを除外する。全対象をNOFOLLOW_LINKSの読み取り専用descriptorで開き、各ファイルの取得時点の長さを固定した後、16KiB bufferでZipOutputStreamへ元の名前・bytesのままコピーする。snapshot合計は64MiBまで。取得後の追記は含めず、保持整理によるrename・置換・削除後も開いた元descriptorから読む。全ファイルで同一瞬間のsnapshotや行単位の完結は保証しない。取得途中の消失・置換、短い読み取り、出力open/write/close失敗は成功としない。対象0件では出力streamを開かないが、SAFが作成した空ファイルが保存先に残る場合がある。途中失敗では不完全なZIPが残り得るためUIで知らせる。
+exporterはDispatchers.IOでfilesDir/observability直下の通常ログだけを扱う。日付付き・同日分割・既存の旧形式（monitoring-observation.log、monitoring-observation.1～3.log / monitoring-observation.log.1～3）を許可し、作業ファイル・子ディレクトリ・シンボリックリンク・その他のprivate fileを除外する。全対象をNOFOLLOW_LINKSの読み取り専用descriptorで開き、各ファイルの取得時点の長さを固定した後、16KiB bufferでZipOutputStreamへ元の名前・bytesのままコピーする。snapshot合計は64MiBまで。取得後の追記は含めず、保持整理によるrename・置換・削除後も開いた元descriptorから読む。全ファイルで同一瞬間のsnapshotや行単位の完結は保証しない。取得途中の消失・置換、短い読み取り、出力open/write/close失敗は成功としない。対象0件では出力streamを開かないが、SAFが作成した空ファイルが保存先に残る場合がある。途中失敗はFAILUREとして呼出元へ返す。
 
 書き出しはlogger・executionMutexを取得せず、原本の削除・移動・切り詰め、ログ初期化・整理、観測イベント追加、監視設定・count・予約・認証情報の読書きを行わない。保存先以外へのアップロード・共有、追加のストレージ権限、FileProviderを追加しない。
 

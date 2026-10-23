@@ -152,13 +152,5 @@
     <string name="demo_mode">Demo Mode</string>
     <string name="demo_mode_description">実際のメールサーバーへ接続せず、テスト用の受信データを使用します。</string>
     <string name="demo_mode_active">デモモード動作中</string>
-    <string name="diagnostics">診断</string>
-    <string name="observation_export_save">観測ログを保存</string>
-    <string name="observation_export_description">監視・通信状態の診断ログをZIPファイルに保存します</string>
-    <string name="observation_export_privacy">ログにはアカウント識別子・時刻・通信状態などの診断情報が含まれる場合があります。共有する前にZIPの内容を確認してください。</string>
-    <string name="observation_export_running">観測ログを保存中…</string>
-    <string name="observation_export_success">観測ログを保存しました。対象：%1$d件、保存：%2$d件。</string>
-    <string name="observation_export_no_files">保存する観測ログがありません。対象：%1$d件、保存：%2$d件。</string>
-    <string name="observation_export_failure">保存に失敗しました。対象：%1$d件、書き込み完了：%2$d件。不完全なZIPが残る場合があります。再度保存してください。</string>
-    <string name="observation_export_picker_failed">保存先の選択画面を開けませんでした。再度お試しください。</string>
+    <string name="monitoring_status_mobile_restriction_advice">※モバイル通信が制限されている可能性があります。アプリの『モバイルデータの無制限使用』をご確認ください。</string>
 </resources>

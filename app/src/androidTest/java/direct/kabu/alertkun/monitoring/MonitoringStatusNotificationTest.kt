@@ -16,6 +16,34 @@ import java.util.Locale
 /** No user settings/credentials writes, no network or real mail checks. Own notification only. */
 @androidx.test.filters.SdkSuppress(minSdkVersion = 26)
 class MonitoringStatusNotificationTest {
+    @Test fun cellularAdviceIsIndependentOfSilentAdviceAndClearsOnSuccess() {
+        assertEquals(6004, MonitoringStatusNotifier.NOTIFICATION_ID)
+        for (locale in listOf(Locale.JAPANESE, Locale.ENGLISH)) {
+            val localized = context.createConfigurationContext(Configuration(context.resources.configuration).apply { setLocale(locale) })
+            val notifier = MonitoringStatusNotifier(localized)
+            val advice = localized.getString(R.string.monitoring_status_mobile_restriction_advice)
+            val silentAdvice = localized.getString(R.string.monitoring_status_silent_recommendation)
+            for (silent in listOf(true, false)) {
+                val notification = notifier.notification(123L, silent, MonitoringStatusResult.Failure(2, 3, true))
+                val body = notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+                assertTrue(body.contains(advice))
+                assertEquals(!silent, body.contains(silentAdvice))
+                assertTrue(body.contains(localized.getString(R.string.monitoring_status_check_failed, 2, 3)))
+                assertEquals(123L, notification.`when`)
+                assertTrue(notification.flags and Notification.FLAG_ONLY_ALERT_ONCE != 0)
+                assertEquals(MonitoringStatusNotifier.CHANNEL_ID, notification.channelId)
+                for (state in listOf(MonitoringStatusResult.Checking, MonitoringStatusResult.Success(null),
+                        MonitoringStatusResult.Failure(2, 3))) {
+                    val normal = notifier.notification(124L, silent, state)
+                    assertFalse(normal.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString().contains(advice))
+                }
+            }
+            val events = mutableListOf<Map<String, Any?>>()
+            MonitoringStatusNotifier(localized, { true to 124L }, observation = { _, fields -> events += fields })
+                .onCheckResult(123L, MonitoringStatusResult.Failure(2, 3, true), 123L, MailCheckTrigger.FCM, "old-fixture")
+            assertTrue(events.any { it["reason"] == "GENERATION_MISMATCH" })
+        }
+    }
     private val context = ApplicationProvider.getApplicationContext<Context>()
     private val manager = context.getSystemService(NotificationManager::class.java)
 

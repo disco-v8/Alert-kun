@@ -52,19 +52,13 @@ Without exact-alarm permission, finite alerts retain the regular service entry, 
 
 ## Monitoring state notification
 
+If a real mail check fails on cellular and the OS reports restrictions for that read attempt's network, the notification suggests checking the app's Unrestricted mobile data setting. It does not assert that the setting is off. The advice is absent for Wi-Fi, successful checks, authentication errors, unknown restriction state and Demo Mode, and disappears after recovery. It is independent of the silent-notification recommendation.
+
 An incoming FCM check request shows “Checking mail”. The same notification is updated only after the whole mail check, including any retries, finishes. A successful check shows “No issues” or the selected matching alert. A failed check shows the current failure count and configured threshold until the threshold is reached, then the consecutive failure count. A later successful check resets the count to zero. The result timestamp is the completion time. Backup and manual checks use the same result display; skipped checks do not report success. Turning monitoring off removes this notification. Alert and consecutive-failure notifications remain separate.
 
 ## Once-daily Monitoring status notification
 
 The separate Monitoring status notification is enabled by default and reports healthy monitoring and the number of selected alerts over the past 24 hours. Its first report waits for 24 hours after the first successful check; later reports occur on the first successful check at least 24 hours after the previous report. Failures during that period suppress the normal daily report. This notification uses a separate silent channel and is distinct from the per-check Monitoring state notification.
-
-## Export observation logs
-
-In Settings, select **Diagnostics → Export observation logs** near the verification tools. Choose a destination and filename in Android's file picker, then save the ZIP. This works with monitoring and Demo Mode either on or off; no settings need to be saved again.
-
-The ZIP contains all retained observation logs, including daily files, split files and legacy rotations, with their original names and bytes. Logs may contain account identifiers, timestamps and connection states. Review the contents before sharing. This exports diagnostic logs only, not settings, mail bodies or credentials. The app does not upload or automatically share the ZIP.
-
-The screen reports files found, files saved and success, failure or no files. Cancelling the picker writes nothing. Original logs, monitoring settings and failure counters remain unchanged. Bytes appended after each file's snapshot are excluded; export again to collect later activity. A failed save may leave an incomplete ZIP; do not treat it as a complete archive. If no logs exist, the picker may leave an empty destination file.
 
 ## Self-builds and the official FCM service
 

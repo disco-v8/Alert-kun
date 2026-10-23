@@ -17,6 +17,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MailCheckCompletionHandlerTest {
+    @Test fun displayOnlyRestrictionHintPreservesAccountingAndClearsOnRecovery() = runBlocking {
+        val f = Fixture()
+        val failed = f.handler.complete(failure, 100L, 3, MailCheckTrigger.FCM, 0, true)
+        assertEquals(MonitoringStatusResult.Failure(1, 3, true), failed.display)
+        assertEquals(1, failed.state.consecutiveFailureCount)
+        assertFalse(failed.shouldNotifyFailure)
+        val recovered = f.handler.complete(MailCheckResult(true), 200L, 3, MailCheckTrigger.FCM, 0, true)
+        assertEquals(MonitoringStatusResult.Success(null), recovered.display)
+        assertEquals(0, recovered.state.consecutiveFailureCount)
+    }
     private val failure = MailCheckResult(false, failureKind = MonitoringFailureKind.SERVER_UNAVAILABLE)
     private class Fixture {
         val status = MonitoringStatusRepository.forStore(MemoryPreferences())

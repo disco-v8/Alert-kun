@@ -99,11 +99,12 @@ class MailCheckWorker(appContext: Context, parameters: WorkerParameters) : Corou
                 val checkStarted = android.os.SystemClock.elapsedRealtime()
                 observe("CHECK_START", "generation" to expectedGeneration)
                 var completionAttempted = false
+                var cellularRestrictionSuspected = false
                 suspend fun complete(result: MailCheckResult, completedAt: Long) {
                     // Account only the final poll outcome, never an individual read attempt or account.
                     completionAttempted = true
                     val completion = MailCheckCompletionHandler(status).complete(result, completedAt,
-                        settings.consecutiveFailureThreshold, trigger, expectedGeneration)
+                        settings.consecutiveFailureThreshold, trigger, expectedGeneration, cellularRestrictionSuspected)
                     MonitoringStateStore.update(completion.state)
                     // Display errors must not turn a completed success into failure or count failure twice.
                     runCatching {
@@ -124,8 +125,10 @@ class MailCheckWorker(appContext: Context, parameters: WorkerParameters) : Corou
                     val result = if (selection.mode == direct.kabu.alertkun.mail.common.MailCheckMode.DEMO) {
                         MailCheckCoordinatorFactory.create(applicationContext, selection, null, connectionObservation).check()
                     } else DefaultNetworkMonitor(applicationContext, connectionObservation).use { network ->
-                        MailCheckCoordinatorFactory.create(applicationContext, selection, NetworkStabilization(network,
+                        val checked = MailCheckCoordinatorFactory.create(applicationContext, selection, NetworkStabilization(network,
                             { monitoringDebugLog(applicationContext, it) }, observation = connectionObservation), connectionObservation).check()
+                        cellularRestrictionSuspected = network.shouldAdviseCellularRestriction(checked)
+                        checked
                     }
                     val completedAt = System.currentTimeMillis()
                     checkResult = if (result.success) "SUCCESS" else "FAILURE"

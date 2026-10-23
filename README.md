@@ -18,7 +18,6 @@
 - アカウントごとのTLS証明書検証4モード（標準は厳密検証）
 - 過去24時間の監視が正常な場合に1日1回知らせる、静かな監視ステータス通知
 - Android Keystoreを利用したパスワード保護
-- 利用者操作による観測ログのZIP保存（[日本語](user-guide.md#観測ログを保存) / [English](user-guide.en.md#export-observation-logs)）
 
 Release 1.0はGitHub Releasesで署名済みAPKを配布する方針です。AndroidクライアントのソースコードをBSD 3-Clause Licenseで公開し、キャラクター画像には別ライセンスを適用します。
 

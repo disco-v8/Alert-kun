@@ -20,6 +20,9 @@ internal data class DefaultNetworkState(
 
 internal interface DefaultNetworkSource {
     val state: StateFlow<DefaultNetworkState>
+    fun readStarted() {}
+    fun readFailed(error: Throwable) {}
+    fun readSucceeded() {}
     suspend fun awaitReady(timeoutMillis: Long): Boolean =
         withTimeoutOrNull(timeoutMillis) { state.first { it.ready }; true } ?: false
 }
@@ -66,13 +69,16 @@ internal class NetworkStabilization(
         var attempt = 1
         while (true) {
             val before = network.state.value.changeVersion
+            network.readStarted()
             try {
                 val result = operation()
+                network.readSucceeded()
                 if (attempt > 1) observe("NETWORK_RETRY_END", "attempt" to attempt, "maxAttempts" to MAX_ATTEMPTS,
                     "retryNumber" to retriesUsed, "result" to "SUCCESS")
                 return result
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
+                network.readFailed(error)
                 val changed = network.state.value.changeVersion != before
                 val transient = isTransientNetworkRetryCandidate(error)
                 val candidate = retriesUsed < MAX_ATTEMPTS - 1 && remainingWait >= 3_000L && transient

@@ -156,6 +156,8 @@ internal class MonitoringStatusNotifier(
                 }?.notification?.extras?.getCharSequence(Notification.EXTRA_BIG_TEXT)
                 append(displayed ?: details)
             }
+            if (result is MonitoringStatusResult.Failure && result.cellularRestrictionSuspected)
+                append('\n').append(context.getString(R.string.monitoring_status_mobile_restriction_advice))
             if (!silent) append('\n').append(context.getString(R.string.monitoring_status_silent_recommendation))
         }
         val open = PendingIntent.getActivity(context, NOTIFICATION_ID, Intent(context, MainActivity::class.java)

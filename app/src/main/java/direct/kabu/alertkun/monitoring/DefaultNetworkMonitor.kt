@@ -20,6 +20,9 @@ internal class DefaultNetworkMonitor(
     private val lock = Any()
     private var closed = false
     private var registered = false
+    private val restrictionEvidence = CellularRestrictionEvidence()
+    private var blockedNetwork: Network? = null
+    private var networkBlocked: Boolean? = null
     private val mutableState = MutableStateFlow(initialState())
     override val state = mutableState.asStateFlow()
 
@@ -35,6 +38,7 @@ internal class DefaultNetworkMonitor(
             if (closed) return@synchronized
             val previous = mutableState.value
             val changed = previous.networkId != network.toString()
+            if (changed) { blockedNetwork = null; networkBlocked = null }
             if (changed) mutableState.value = DefaultNetworkState(network.toString(), changeVersion = previous.changeVersion + 1)
             log("network available default network changed=$changed")
             deviceObservation.callback("AVAILABLE", network, mutableState.value.networkId == network.toString())
@@ -53,6 +57,8 @@ internal class DefaultNetworkMonitor(
             deviceObservation.callback("LOST", network, mutableState.value.networkId == network.toString())
             log("network lost currentDefault=${mutableState.value.networkId == network.toString()}")
             if (mutableState.value.networkId == network.toString()) {
+                blockedNetwork = null
+                networkBlocked = null
                 mutableState.value = DefaultNetworkState(changeVersion = mutableState.value.changeVersion + 1)
                 log("default network changed available=false")
             }
@@ -61,6 +67,8 @@ internal class DefaultNetworkMonitor(
             if (closed) return@synchronized
             deviceObservation.callback("BLOCKED_STATUS_CHANGED", network, mutableState.value.networkId == network.toString(), blocked = blocked)
             if (mutableState.value.networkId != network.toString()) return@synchronized
+            blockedNetwork = network
+            networkBlocked = blocked
             // This does not change readiness, retry decisions or monitoring results.
             deviceObservation.blocked(blocked)
         }
@@ -70,6 +78,31 @@ internal class DefaultNetworkMonitor(
             deviceObservation.callback("LINK_PROPERTIES_CHANGED", network, mutableState.value.networkId == network.toString())
         }
     }
+
+    /** Fresh reads outside callbacks, fenced to the tracked default network and this check. */
+    private fun restrictionSnapshot(): CheckNetworkSnapshot = synchronized(lock) {
+        try {
+            val tracked = mutableState.value
+            val active = manager.activeNetwork
+            val caps = active?.let(manager::getNetworkCapabilities)
+            val cellular = active != null && active.toString() == tracked.networkId &&
+                caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+            val restricted = (active != null && active == blockedNetwork && networkBlocked == true) ||
+                manager.restrictBackgroundStatus == ConnectivityManager.RESTRICT_BACKGROUND_STATUS_ENABLED
+            if (manager.activeNetwork != active) CheckNetworkSnapshot(null, tracked.changeVersion, false, false)
+            else CheckNetworkSnapshot(active?.toString(), tracked.changeVersion, cellular, restricted)
+        } catch (_: Exception) {
+            CheckNetworkSnapshot(null, mutableState.value.changeVersion, false, false)
+        }
+    }
+
+    override fun readStarted() { restrictionEvidence.readStarted(restrictionSnapshot()) }
+    override fun readFailed(error: Throwable) { restrictionEvidence.readFailed(restrictionSnapshot(), error) }
+    override fun readSucceeded() { restrictionEvidence.readSucceeded() }
+    internal fun shouldAdviseCellularRestriction(result: MailCheckResult): Boolean =
+        restrictionEvidence.shouldAdvise(result, restrictionSnapshot())
 
     init {
         deviceObservation.snapshot("CHECK_BEGIN")

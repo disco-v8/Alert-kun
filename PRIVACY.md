@@ -44,10 +44,6 @@ Googleによる情報の取り扱いは[Googleプライバシーポリシー](ht
 
 アプリの観測ログには、パスワード、MasterID・MasterPwd、token、Authorization、メールサーバーのユーザー名・接続先、メール内容、任意のFCM payload、SSID・BSSID、IP・DNSアドレス、例外メッセージを保存しない仕様です。保持対象は過去15×24時間、総量の上限は64MiBです。整理はアプリ動作に伴って行うため、期限到達と同時の消去を保証しません。容量制限により、それより早く削除する場合もあります。
 
-「設定」の「観測ログを保存」では、利用者が選んだ保存先へ保持中の観測ログをZIPとしてコピーします。アカウント識別子・時刻・通信状態等の診断情報が含まれるため、共有前に内容を確認してください。アプリから外部サーバーへのアップロードや自動共有は行いません。元ログは保存操作では削除せず、保存先のZIPはアプリ内ログの保持整理とは別に利用者が管理します。
-
-In Settings, “Export observation logs” copies retained diagnostic logs to a ZIP at a destination you choose. These logs may include account identifiers, timestamps and connection states; review them before sharing. The app does not upload or automatically share the ZIP. Exporting keeps the original logs, and you manage the exported ZIP separately from the app's log retention.
-
 ## 保存期間と削除
 
 端末内メールの内容は「内部からメール削除」で保持期間を選べます。初期値は1週間です。「削除しない」も選べます。期限を過ぎた処理済みメールは、毎時最初の実メール確認時に内容を削除して一覧から除外します。未処理メールは保護し、重複受信・再警報防止や削除再試行に必要な最小記録は保持します。設定・ルール・認証情報には同じメール保持期限を適用しません。

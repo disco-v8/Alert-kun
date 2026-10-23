@@ -122,6 +122,8 @@ AI coding agentと開発作業者向けの厳守事項。実装前に[architectu
 
 ## UI・テスト・ドキュメント
 
+- Cellular制限の案内は同じ実MailCheck読取試行・同じネットワークで得た明示的なOS制限と通信失敗だけを根拠に6004の最終失敗表示へ追加する。認証/TLSエラー、Wi-Fi、Demo、成功、古い世代・ネットワーク、不明な観測では表示しない。ログ検索や監視制御への流用は禁止。通常設定画面に観測ログ保存UIを設けず、内部ログの記録・保持・秘密情報保護は維持する。
+
 - 製品表示名は英語「Alert-kun」、日本語「アラートくん」。通知・チャンネル・画面・文書で統一し、AlertKun / Alertkunはコード識別子・クラス名に限る。
 
 - Kotlinは4スペース、classはPascalCase、関数・変数はcamelCase、resourceはlowercase_with_underscores。
