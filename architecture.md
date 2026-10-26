@@ -267,7 +267,7 @@ PC observerは端末ごとの排他lease、PAUSE / STOP制御と24時間の既�
 
 DynamicDenylistManagerは候補であり端末での実行を断定しない。PC側は変化時にSettings providerのdumpからManualDenylist / DynamicDenylistと対象packageを確認し、PRESENT / ABSENT / UNKNOWNを記録する。両sectionが読めない・timeout・permission denialの場合はUNKNOWN。ON表示やpolicy値だけからmanual/dynamicを決めない。公開AOSPのdumpメソッドがあるだけではPixelの公開取得経路がある証明にならない。取得できない場合は再発時のbugreportとSettings側の追加計測で確認する。
 
-PC側で非表示の別processとして開始する場合は`tools/diagnostics/Start-NetworkPolicyObserver.ps1 -Hours 24`を使用し、表示されたSessionとそのtimeline.jsonlで継続取得を確認する。`Control-NetworkPolicyObserver.ps1 -Session <Sessionの絶対path> -Action Pause / Resume / Stop`で制御する。Pause / Stopは収集側の停止応答を確認してから戻る。終了したsessionは再開できず、Startで新sessionを作成する。parser・取得失敗・一時的なpolicy履歴・denylist判別の確認は`Test-NetworkPolicyObserver.ps1`で行う。
+PC側で非表示の別processとして開始する場合は`tools/diagnostics/Start-NetworkPolicyObserver.ps1 -Serial <端末ID> -Hours 24`を使用し、表示されたSessionとそのtimeline.jsonlで継続取得を確認する。直接実行と起動scriptの両方で、端末IDは`-Serial`または環境変数`ALERTKUN_DEVICE_SERIAL`で指定する。指定がない場合や不正な形式の場合は収集開始前に終了し、接続端末の自動選択は行わない。`Control-NetworkPolicyObserver.ps1 -Session <Sessionの絶対path> -Action Pause / Resume / Stop`で制御する。Pause / Stopは収集側の停止応答を確認してから戻る。終了したsessionは再開できず、Startで新sessionを作成する。parser・取得失敗・一時的なpolicy履歴・denylist判別・端末指定の確認は`Test-NetworkPolicyObserver.ps1`で行う。
 
 ### 成功記録とbackup skip
 

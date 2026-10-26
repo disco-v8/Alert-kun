@@ -17,6 +17,9 @@ local.properties
 .kotlin/
 app/google-services.json
 
+# Private Gateway repository; never include it in the Android publication.
+/fcm-server/
+
 # Build output and local IDE state (no .idea files are tracked).
 **/build/
 /.idea/

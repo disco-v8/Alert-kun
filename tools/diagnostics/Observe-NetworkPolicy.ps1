@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$AdbPath = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe",
-    [ValidatePattern('^[A-Za-z0-9._:-]+$')][string]$Serial = '',
+    [string]$Serial = $env:ALERTKUN_DEVICE_SERIAL,
     [int]$Port = 5038,
     [ValidateRange(60,3600)][int]$IntervalSeconds = 60,
     [ValidateRange(1,168)][int]$Hours = 24,
@@ -11,6 +11,13 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+function Resolve-ObservationSerial([string]$Value) {
+    if ([string]::IsNullOrWhiteSpace($Value) -or $Value -notmatch '^[A-Za-z0-9_-]+$') {
+        throw 'Specify one device with -Serial or ALERTKUN_DEVICE_SERIAL; automatic device selection is disabled.'
+    }
+    return $Value
+}
 
 function Get-PolicyValue([string]$Dump, [int]$AppUid) {
     if ($Dump -match '(?im)^\s*(Permission Denial|Failure while dumping|error:)|DUMP TIMEOUT') { return 'UNKNOWN' }
@@ -128,6 +135,7 @@ function Save-Details([string]$Directory) {
 }
 
 if ($LibraryOnly) { return }
+$Serial = Resolve-ObservationSerial $Serial
 if (-not $OutputRoot) { $OutputRoot = Join-Path $PSScriptRoot '..\..\build\investigation\network-policy' }
 $resolvedRoot = [IO.Path]::GetFullPath($OutputRoot)
 [void][IO.Directory]::CreateDirectory($resolvedRoot)

@@ -1,6 +1,6 @@
 # Alert-kun Privacy Policy
 
-対象：Alert-kun（アラートくん）Release 1.0。更新日：2026年10月19日（Updated: October 19, 2026）。
+対象：Alert-kun（アラートくん）Release 1.0。更新日：2026年10月26日（Updated: October 26, 2026）。
 
 提供者：Future Versatile Group/MyDNS.JP
 
@@ -22,6 +22,8 @@ Gatewayは、端末認証とメール確認を促す通知の配送に使用し�
 
 認証後は、Gatewayが発行するdeviceTokenによるBearer認証を使用し、FCM registration tokenと確認間隔をHTTPSで送信します。GatewayではMasterID、FCM registration token、確認間隔、登録・利用・通知要求等の日時、認証の有効状態を保持します。deviceTokenは照合用のハッシュとして保持します。
 
+登録確定には、要求を開始したアプリによるFCM端末確認が必要です。確認用の要求識別情報・乱数・証明情報をFCMとHTTPSで扱います。端末では未完了要求と確認開始元の秘密値をAndroid Keystoreで保護した鍵で暗号化保存し、バックアップ・端末移行から除外します。確認は自動で行い、確認待ちは登録成功として扱いません。
+
 メールサーバーの認証情報（ユーザー名・パスワード等）、受信メール本文・件名・送信元、ルールはGatewayへ送信しません。メール取得と判定は端末で行います。Gatewayサーバー実装は非公開で、このリポジトリには含めません。
 
 ## Gatewayの運用ログ
@@ -34,7 +36,7 @@ Gatewayは、端末認証とメール確認を促す通知の配送に使用し�
 
 Google Firebase Cloud Messaging（FCM）を第三者サービスとして利用します。FCM registration token等の通知配送に必要な情報は、Googleのサービスでも処理されます。
 
-現在、Gatewayが送るdata payloadは`action=CHECK_MAIL`という制御情報だけです。受信メール本文・件名・送信元やメールサーバーのパスワードを含めません。FCMがメールを取得するのではなく、通知を受けたAndroid端末が監視設定に従ってメールサーバーへ接続します。
+Gatewayは、メール確認を促す`action=CHECK_MAIL`と、登録時の端末確認用`action=VERIFY_REGISTRATION`をFCMで送ります。端末確認には要求識別情報・乱数・対象tokenのハッシュ・チャレンジ等を含みます。受信メール本文・件名・送信元やメールサーバーのパスワードを含めません。メール確認通知を受けたAndroid端末が監視設定に従ってメールサーバーへ接続し、端末確認通知はメール取得や警報を開始しません。
 
 Googleによる情報の取り扱いは[Googleプライバシーポリシー](https://policies.google.com/privacy)を参照してください。
 

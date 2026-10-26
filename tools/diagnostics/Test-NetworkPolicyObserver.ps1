@@ -24,4 +24,11 @@ $evidence = Get-DenylistEvidence "ManualDenylist:`n Failure while dumping the pr
 Assert-Equal 'UNKNOWN' $evidence.manual
 Assert-Equal 'UNKNOWN' $evidence.dynamic
 Assert-Equal '"C:\path with spaces\\"' (Quote-Argument 'C:\path with spaces\')
-Write-Host 'PASS: policy parsing, missing/failed dump, transient policy history, manual/dynamic evidence, process quoting.'
+Assert-Equal 'fixture_device' (Resolve-ObservationSerial 'fixture_device')
+Assert-Equal 'emulator-5590' (Resolve-ObservationSerial 'emulator-5590')
+foreach ($invalidSerial in @('', ' ', 'device one', '../device', "device`nother", 'device"other')) {
+    $rejected = $false
+    try { $null = Resolve-ObservationSerial $invalidSerial } catch { $rejected = $true }
+    Assert-Equal $true $rejected
+}
+Write-Host 'PASS: policy parsing, missing/failed dump, transient policy history, manual/dynamic evidence, process quoting, explicit device selection.'
